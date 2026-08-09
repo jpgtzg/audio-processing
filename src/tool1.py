@@ -1,4 +1,5 @@
 import os
+import sqlite3
 
 from src.audio import remove_silence, transcribe_audio_segments
 from src.extraction import extract_spot_details
