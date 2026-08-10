@@ -1,3 +1,4 @@
-from .spot_details import SpotDetails
+from .altas_sara_fp import AltasSaraFP
+from .settings import settings
 
-__all__ = ["SpotDetails"]
+__all__ = ["AltasSaraFP", "settings"]
