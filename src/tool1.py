@@ -42,6 +42,7 @@ def build_vocabulary_prompt() -> str:
         prompt = candidate
     return prompt
 
+
 FIELDS = [
     "filename",
     "categoria",
