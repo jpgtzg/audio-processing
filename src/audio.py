@@ -11,23 +11,11 @@ load_dotenv()
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# The transcription API rejects uploads over 25MB, so oversized files are split into
-# fixed-length chunks and re-encoded as low bitrate mp3 (~64kbps mono keeps a chunk
-# this long well under the limit regardless of the source format/bitrate).
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 CHUNK_DURATION_MS = 20 * 60 * 1000
 
-# Whisper can silently stop transcribing partway through a file when it hits a
-# stretch of non-speech mid-clip (e.g. a station-ID tag followed by a music bed
-# before a second ad resumes) -- it just returns what it has instead of continuing
-# past the gap. Splitting every file into short, overlapping windows forces a fresh
-# decode per window, so content after a mid-clip gap doesn't get dropped -- one bad
-# "I'm done" decision only costs that window instead of the rest of the file.
-# Values tuned empirically: smaller windows (~15s) still let the gap fit inside a
-# single window and reproduce the bug; ~7s with ~2.5s overlap reliably surfaced
-# content that was previously lost, across a ~30-file spot check.
-WINDOW_DURATION_MS = 7 * 1000
-WINDOW_OVERLAP_MS = 2500
+WINDOW_DURATION_MS = 4 * 1000
+WINDOW_OVERLAP_MS = 1500
 
 
 def remove_silence(
@@ -63,7 +51,9 @@ def remove_silence(
         base, ext = os.path.splitext(filepath)
         output_path = f"{base}_trimmed{ext or '.wav'}"
 
-    trimmed.export(output_path, format=os.path.splitext(output_path)[1].lstrip(".") or "wav")
+    trimmed.export(
+        output_path, format=os.path.splitext(output_path)[1].lstrip(".") or "wav"
+    )
     return output_path
 
 
@@ -94,25 +84,35 @@ def _iter_audio_chunks(filepath: str):
         yield start_ms / 1000.0, tmp_path
 
 
-def _make_windows(audio: AudioSegment) -> list[AudioSegment]:
-    """Splits audio into overlapping WINDOW_DURATION_MS windows. A partial trailing
+def _make_windows(
+    audio: AudioSegment,
+    window_duration_ms: int = WINDOW_DURATION_MS,
+    window_overlap_ms: int = WINDOW_OVERLAP_MS,
+) -> list[AudioSegment]:
+    """Splits audio into overlapping window_duration_ms windows. A partial trailing
     window is always folded into the previous one instead of standing alone, since
     short, mostly-padding tail windows are prone to hallucinating unrelated filler
     content."""
     duration_ms = len(audio)
-    if duration_ms <= WINDOW_DURATION_MS:
+    if duration_ms <= window_duration_ms:
         return [audio]
 
-    step_ms = WINDOW_DURATION_MS - WINDOW_OVERLAP_MS
+    step_ms = window_duration_ms - window_overlap_ms
     starts = list(range(0, duration_ms, step_ms))
 
-    while len(starts) > 1 and duration_ms - starts[-1] < WINDOW_DURATION_MS:
+    while len(starts) > 1 and duration_ms - starts[-1] < window_duration_ms:
         starts.pop()
 
-    return [audio[start_ms : min(start_ms + WINDOW_DURATION_MS, duration_ms)] for start_ms in starts]
+    windows = [
+        audio[start_ms : start_ms + window_duration_ms] for start_ms in starts[:-1]
+    ]
+    windows.append(audio[starts[-1] : duration_ms])
+    return windows
 
 
-def _stitch_transcripts(texts: list[str], boundary_chars: int = 80, min_match_chars: int = 6) -> str:
+def _stitch_transcripts(
+    texts: list[str], boundary_chars: int = 80, min_match_chars: int = 6
+) -> str:
     """Merges consecutive window transcripts, using a fuzzy character-level match
     near each boundary to find the real overlap (Whisper doesn't transcribe the same
     overlapping audio identically between two windows), instead of naively
@@ -135,14 +135,23 @@ def _stitch_transcripts(texts: list[str], boundary_chars: int = 80, min_match_ch
         match = matcher.find_longest_match(0, len(tail), 0, len(head))
 
         if match.size >= min_match_chars:
-            merged = merged[: len(merged) - len(tail)] + tail[: match.a] + next_text[match.b :]
+            merged = (
+                merged[: len(merged) - len(tail)]
+                + tail[: match.a]
+                + next_text[match.b :]
+            )
         else:
             merged = merged + " " + next_text
 
     return merged.strip()
 
 
-def transcribe_audio(filepath: str, prompt: str = "") -> str:
+def transcribe_audio(
+    filepath: str,
+    prompt: str = "",
+    window_duration_ms: int = WINDOW_DURATION_MS,
+    window_overlap_ms: int = WINDOW_OVERLAP_MS,
+) -> str:
     if os.path.getsize(filepath) > MAX_UPLOAD_BYTES:
         texts = []
         for _offset_seconds, chunk_path in _iter_audio_chunks(filepath):
@@ -152,6 +161,7 @@ def transcribe_audio(filepath: str, prompt: str = "") -> str:
                     file=f,
                     response_format="json",
                     prompt=prompt,
+                    language="es",
                 )
             texts.append(result.text)
             os.remove(chunk_path)
@@ -159,7 +169,7 @@ def transcribe_audio(filepath: str, prompt: str = "") -> str:
 
     audio = AudioSegment.from_file(filepath)
     texts = []
-    for chunk in _make_windows(audio):
+    for chunk in _make_windows(audio, window_duration_ms, window_overlap_ms):
         tmp_path = tempfile.mktemp(suffix=".wav")
         chunk.export(tmp_path, format="wav")
         try:
