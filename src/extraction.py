@@ -110,8 +110,9 @@ def extract_spot_details(transcript: str) -> dict:
 
 
 BRAND_MENTION_SYSTEM_PROMPT = """You are helping a media monitoring company scan discarded/oversized audio
-segments (song breaks, operator chatter, long unclassified stretches — NOT confirmed commercials) for any
-mention of a brand or advertiser, so a capturista can review whether it's worth investigating further.
+segments from a TV or radio program (song breaks, operator chatter, long unclassified stretches — NOT
+confirmed commercials) for any mention of a brand or advertiser, so a capturista can review whether it's
+worth investigating further.
 
 You will be given a transcript as a numbered list of timestamped segments, e.g.:
 [0] 0.00-2.40: "..."
