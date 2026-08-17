@@ -97,3 +97,71 @@ def extract_spot_details(transcript: str) -> dict:
         "vigencia": data.get("vigencia"),
         "keywords": data.get("keywords", []),
     }
+
+
+BRAND_MENTION_SYSTEM_PROMPT = """You are helping a media monitoring company scan discarded/oversized audio
+segments (song breaks, operator chatter, long unclassified stretches — NOT confirmed commercials) for any
+mention of a brand or advertiser, so a capturista can review whether it's worth investigating further.
+
+You will be given a transcript as a numbered list of timestamped segments, e.g.:
+[0] 0.00-2.40: "..."
+[1] 2.40-5.10: "..."
+
+Find every distinct brand/advertiser mention. For each one, report:
+- "marca": the brand/product name as said.
+- "anunciante": the company behind it, if identifiable from the mention; otherwise reuse "marca".
+- "start_segment" / "end_segment": the indices (from the numbered list) of the first and last segment the
+  mention spans. Use the same index for both if it's contained in one segment.
+
+Do not invent mentions. If the transcript is just music, silence, or unrelated chatter with no brand
+mentioned, return an empty list. A brief passing mention still counts.
+
+Write all output text in Spanish (brand/product names should stay as mentioned in the transcript).
+
+Respond with JSON only, matching this shape:
+{"mentions": [{"marca": "...", "anunciante": "...", "start_segment": 0, "end_segment": 0}]}
+"""
+
+
+def extract_brand_mentions(segments: list[dict]) -> list[dict]:
+    """Given timestamped transcript segments (as returned by
+    audio.transcribe_audio_segments), finds brand/advertiser mentions and resolves
+    each one's segment-index span back to real start/end times in seconds."""
+    if not segments:
+        return []
+
+    numbered = "\n".join(
+        f"[{i}] {s['start']:.2f}-{s['end']:.2f}: \"{s['text']}\""
+        for i, s in enumerate(segments)
+    )
+
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[
+            {"role": "system", "content": BRAND_MENTION_SYSTEM_PROMPT},
+            {"role": "user", "content": numbered},
+        ],
+        response_format={"type": "json_object"},
+    )
+
+    content = response.choices[0].message.content
+    data = json.loads(content or "{}")
+
+    mentions = []
+    for mention in data.get("mentions", []):
+        start_idx = mention.get("start_segment")
+        end_idx = mention.get("end_segment")
+        if not isinstance(start_idx, int) or not isinstance(end_idx, int):
+            continue
+        if not (0 <= start_idx < len(segments) and 0 <= end_idx < len(segments)):
+            continue
+        mentions.append(
+            {
+                "marca": mention.get("marca"),
+                "anunciante": mention.get("anunciante"),
+                "start": segments[start_idx]["start"],
+                "end": segments[end_idx]["end"],
+            }
+        )
+
+    return mentions
