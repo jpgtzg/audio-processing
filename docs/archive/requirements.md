@@ -1,3 +1,5 @@
+> **Archived.** This was the original scope doc — kept for history. It's superseded by `docs/handoff.md` (current architecture) and `docs/progress.md` (current status). Notably outdated: Tool 1 here still describes trimming/boundary-detection, which the client later removed from scope (clips arrive pre-cropped).
+
 # Audio Processing Project — Requirements
 
 ## Client Context

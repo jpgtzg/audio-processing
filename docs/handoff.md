@@ -1,59 +1,133 @@
 # Audio Processing Project — Handoff
 
+> This is the living architecture/technical reference. For "how much is left before we deliver," see `docs/progress.md` instead.
+
 ## Client Context
 
-The client operates in media monitoring: they maintain databases of merchants/advertisers plus traditional news/media (radio, open TV). Their core business is recording and extracting commercials, then selling that data — including competitive intelligence — to clients who buy access to the full database. Known commercials are already recognized near-100% via audio fingerprinting. The tool shown in the initial meeting is not their identification engine, just a viewer; identification runs on several other tools they already have.
+The client operates in media monitoring: they maintain databases of merchants/advertisers plus traditional news/media (radio, open TV). Their core business is recording and extracting commercials, then selling that data — including competitive intelligence — to clients who buy access to the full database. Known commercials are already recognized near-100% via audio fingerprinting (their existing SARA system). The tool shown in the initial meeting is not their identification engine, just a viewer; identification runs on several other tools they already have.
 
-The client has floated using ChatGPT/AI for part of this process. Fingerprinting only works for commercials already in the database — anything new, or unidentified segments that are probably commercials, currently requires manual audio trimming to find start/end points. That manual bottleneck is what this project automates.
+Fingerprinting only works for commercials already in the database. Anything new — or a segment that's probably a commercial but isn't recognized — currently requires manual review to confirm and register. **That manual bottleneck is what Tool 1 automates.**
 
-Full raw notes and original requirements synthesis live in `initial-metting-notes` and `requirements.md`.
+Full raw notes live in `docs/raw-notes/`. The original scope docs (now superseded by this file and `docs/progress.md`, kept for history) live in `docs/archive/`.
 
 ## Scope Decision
 
-We're building **two standalone tools**, deliberately decoupled from how the client's server hands off audio (API vs. DB — doesn't matter for tool design) and from the "service" framing (dashboard/API/alerts) raised in the initial meeting. Those integration questions are real but deprioritized until the tools themselves work.
+Two standalone tools, deliberately decoupled from the client's server/API framing:
 
-**Tool 1 — Clip Trimming, Transcription & Naming**
-Input: audio containing one or more commercials/announcements that fingerprinting failed to identify. Trim to actual boundaries, transcribe with Whisper, generate keywords + a name/label per clip, store the result (destination/schema still TBD).
+- **Tool 1 — active, most-built.** Transcribe already-cropped candidate clips, dedupe repeats, generate a title/label, write the result back onto the source `ALTAS_SARA_FP` row for a capturista to validate as a new commercial.
+- **Tool 2 — active, partially built.** Brand-mention detection inside discarded segments (locutor/noticiero/song discards, and oversized clips). Was deferred at project start; work began 2026-08-17.
 
-**Tool 2 — Stream Sponsored-Segment Detection & Extraction** *(not started)*
-Input: the full radio/TV transmission (continuous program audio, not a pre-isolated clip). Strip music/songs, keep only host/commentator speech, detect sponsored sections that "appear out of nowhere" within that speech (applies to both brand mentions and sponsored content embedded in news), transcribe those sections, extract keywords, store.
+## Requirements changed mid-project — read this before touching Tool 1's code
 
-Both tools share a spine — audio → isolate speech worth caring about → Whisper transcribe → extract/match → store — but the "isolate" step differs enough (bounded-segment trim vs. continuous stream filtering) to justify building them as separate pipelines with shared components.
+The original build (`audio.py`, `segmentation.py`, `slicing.py`, `extraction.py`, `tool1.py`) assumed **raw, uncropped audio** as input: it removes silence, transcribes with per-segment timestamps, uses an LLM to detect block boundaries by topic shift, then slices the audio into separate clips. That was correct under the original requirements.
 
-## What We've Built (Tool 1)
+The client has since simplified Tool 1's scope: **the clips are already cropped** by their own SARA pipeline before Tool 1 ever sees them. No boundary detection, no slicing needed. What Tool 1 actually needs to do:
 
-Working end-to-end pipeline, tested against `input/audio1.wav` and `input/audio2.wav`:
+1. Fetch the already-cropped `.wav` for each candidate (currently `client_data/wav2/` locally — see "File access" below).
+2. Transcribe with Whisper.
+3. Detect spots that repeat more than once (and skip anything already registered in the DB before).
+4. Generate a title/label + keywords from the transcript.
+5. Write the result somewhere the client's capturista can review and validate it as a new commercial.
 
-| File | Role |
+The `segmentation.py`/`slicing.py` boundary-detection logic is no longer part of Tool 1's job — it's now redundant with what SARA already does upstream. `audio.py` (Whisper transcription) and `extraction.py` (title/keyword generation) are still relevant and reusable.
+
+## Database access
+
+**Full reference diagram + table-by-table breakdown, published as an artifact:**
+**https://claude.ai/code/artifact/cf443bc9-0dce-4fe2-b6e5-d5cef9a31932**
+
+Quick summary — SQL Server `OrbitMedia_Test` (SQL Server 2008). `pymssql` (built on FreeTDS, forcing `tds version = 7.0` via `src/db/freetds.conf`) is what actually connects — modern ODBC drivers fail TLS negotiation against a server this old. `src/db/db.py` wires this up as a SQLAlchemy engine using `.env` credentials (`DB_SERVER_URL`, `DB_SERVER_PORT`, `DB_SERVER_DATABASE`, `DB_LOGIN`, `DB_PASSWORD`, loaded via `src/models/settings.py`).
+
+- **`TESTIGO_SARA`** — 2-hour station recordings. `HOSTNAME` + `ARCHIVO` point at the file on one of ~27 capture PCs (`SARA2`…`SARA40`).
+- **`SEGMENTO_SARA`** — segments cut from a testigo. `ID_FP` null = unidentified.
+- **`ALTAS_SARA_FP`** — **Tool 1's real entry point, and its write target.** SARA's own new-commercial alta queue.
+  **Corrected 2026-08-17** (this reverses what earlier versions of this doc said): Tool 1 reads rows that SARA's own FP recognition pass could **not** identify — i.e. **status 2, "Recortado"** ("recortes pasaron a ser manejados por el programa reconoce los spots como ya identificados y solo deja a los que no se han identificado") — processes them, writes the extracted title/transcript/advertiser back onto that same row, and sets its status to **4, "Validado Img"** so it's surfaced to a capturista (`operario`) for review. Status 4 is Tool 1's *output*, not its input.
+  ```sql
+  -- input
+  SELECT * FROM ALTAS_SARA_FP WHERE ID_ESTATUS_ALTA = 2
+  -- Tool 1 processes each row, then:
+  -- UPDATE ALTAS_SARA_FP SET ID_ESTATUS_ALTA = 4, ... WHERE ID_ALTAS_SARA_FP = ...
+  ```
+  The `= 2` input status is a strong inference from the already-confirmed status lifecycle table below, matching the client's description ("grab the ones not identified via FP") — not yet literally confirmed as the number "2" with the client, worth a quick double-check before this goes live. Full status lifecycle (1 Nuevo → 2 Recortado → 4 → 5/7/8/9/10/11) is documented in the artifact.
+  This also resolves the previous "Tool 1 write target" open question (#1 below): yes, it writes directly onto the matching `ALTAS_SARA_FP` row, no separate table needed, and reusing status 4 (already meant "surfaced to capturistas") turns out to be exactly the right status to reuse — no new `CAT_ESTATUS_ALTA` value needed after all.
+  - `DETALLE` contains the wav's original UNC path, e.g. `\\SARA22\AltasFP\wavs\XHWK_02-08-2026_103021_31.wav` — **this is a reliable exact-match key** against locally-provided wav filenames (see "Matching local wavs to DB rows" below), since the trailing filename is byte-for-byte the same convention used in `client_data/wav2`.
+  - `VERSION` is a human-readable auto-label: `<estación> - <fecha DD/MM/YYYY> - <hora HH:MM:SS> - <duración>`.
+  - `INICIO` / `DURACION` — **confirmed by ear this session**: `INICIO` is a **millisecond offset directly into the cropped wav file** (not a testigo-relative second offset as originally assumed), and `DURACION` is the real ad's length in **seconds**. So `audio[INICIO_ms : INICIO_ms + DURACION_s*1000]` should isolate just the ad within the padded clip. In practice this is unreliable — see "DB-precise cropping was tried and rejected" below.
+  - `ID_SEGMENTO` links back to `SEGMENTO_SARA` if more context is needed.
+  - `ID_TIPO_ALTA` is consistently `2` (automated pipeline) for every status-4 row seen so far.
+
+## File access
+
+Files live at `C:\Sara\AltasFp\wav` **locally on whichever `SARA<n>` capture host produced them** — not centralized. Direct `C:\` disk access from the client hasn't landed yet.
+
+**Current stand-in**: the client separately shared `client_data/wav2/` — **4,359 already-cropped candidate `.wav` files**, matching the production shape Tool 1 will actually receive (this supersedes the earlier full-day/hour-by-hour audio workaround mentioned in prior versions of this doc). Tool 1's pipeline (`src/tool1.py`) reads directly from this folder.
+
+### Matching local wavs to DB rows
+
+Not every file in `client_data/wav2` has a corresponding DB row (some may be from a different environment/time period than what's in `OrbitMedia_Test`). `scripts/match_wav2_to_db.py` cross-references them:
+
+- Queries `ALTAS_SARA_FP` for rows in the relevant date range with a `.wav]` filename embedded in `DETALLE`, extracts the filename via regex, and intersects it against the local `client_data/wav2` file list.
+- **Result: 2,450 of 4,359 local files (~56%) have a matching DB row.**
+- Matched files + their DB metadata (`INICIO`, `DURACION`, `OFFSET_INI`, `OFFSET_FIN`, `ID_ALTAS_SARA_FP`, `ID_ESTATUS_ALTA`) get copied into `client_data/real_audio_db/` with a `manifest.csv` — this is the closest thing to a ground-truth set for validating transcription/extraction accuracy against known DB data.
+
+## Whisper truncation bug — the main technical problem this session, now fixed
+
+**Symptom**: `whisper-1` sometimes silently stops transcribing partway through a clip — not due to real silence (checked via dBFS), but an internal decoder heuristic ("am I done?") firing prematurely, often around a topic shift, station-ID tag, or music bed. There's no API-exposed parameter to tune this directly on the hosted `whisper-1` endpoint (confirmed via external research, see `docs/transcript_research.md`). Alternative model `gpt-4o-transcribe` was evaluated and rejected — different failure mode (drops other content, non-deterministic, no seed control).
+
+**Fix, implemented in `src/audio.py`**: instead of sending a whole clip as one request, `transcribe_audio()` now:
+1. Splits the **whole, untrimmed** clip into overlapping windows (`_make_windows`, `WINDOW_DURATION_MS = 4000`, `WINDOW_OVERLAP_MS = 1500` — tuned down from an initial `7000`/`2500`; smaller windows gave noticeably better results, forcing a fresh Whisper decode more often). Each window is a fresh Whisper request, so an early-stop on one window only costs that window instead of the rest of the file. A partial trailing window is always folded into the previous one (extends it to cover the true end of the clip) rather than standing alone — short/partial tail windows were prone to hallucinating filler content (e.g. "Tokyo, Japan. Tokyo Republic.").
+2. Stitches consecutive window transcripts back together with fuzzy character-level matching (`_stitch_transcripts`, via `difflib.SequenceMatcher`) at each boundary, since Whisper doesn't transcribe the same overlapping audio identically between two windows — naive exact-word-match or plain concatenation both failed.
+
+Validated across a ~30-file spot check with mostly clean, accurate, complete results.
+
+**Known accepted limitations** (client decision: leave as-is, not worth the complexity to fix):
+- If an ad script genuinely repeats a phrase close together (e.g. "el elevador" twice in one spot), the fuzzy stitcher can occasionally match the wrong occurrence and drop real intervening content.
+- Very short/quiet single-window clips can still occasionally hallucinate.
+
+**A real bug fixed this session** (separate from the above): `_make_windows` originally capped every window's end at `start + WINDOW_DURATION_MS`, including the last one. For clips whose duration only barely exceeded one window, the trailing-fold logic could collapse everything down to a single window that didn't reach the clip's actual end — silently dropping the last few seconds before Whisper ever saw them. Fixed by always extending the final window to the clip's true end.
+
+## DB-precise cropping was tried and rejected
+
+Once `client_data/real_audio_db/` existed with real `INICIO`/`DURACION` values, we tried cropping each clip to just the ad (removing padding/other-ad content) before transcribing, instead of running the untrimmed-clip pipeline.
+
+- A helper (`get_spot_crop`) and a crop step in `tool1.py`'s `process()` were built and tested; both have since been **removed** — the untrimmed/windowed approach is what's live in `tool1.py` today.
+- **Why it was rejected**: `DURACION` frequently undercuts the real ad length. Tested directly on one file — the DB said the ad was 10s, but the actual ad content (confirmed by progressively widening the crop and re-transcribing) continued to ~18s. Cropping to the DB's stated window cut off real content.
+- `scripts/crop_sample.py` still exists as a diagnostic: grabs 5 random files from `client_data/real_audio_db`, crops each to its manifest `INICIO`/`DURACION`, and writes them to `output/{timestamp}/` for a listen-through. Confirmed by ear this session: cropping tight to `DURACION` sounds short/cut off — the untrimmed pipeline is the better source of truth.
+- **Takeaway**: `INICIO`/`DURACION` are useful for reference/sanity-checking (e.g. "does this file even have DB backing," roughly where the ad sits), but not reliable enough to use as the actual transcription input.
+
+## What's built so far
+
+| File | Status |
 |---|---|
-| `audio.py` | Whisper transcription. `transcribe_audio` returns plain text; `transcribe_audio_segments` returns segment-level `{start, end, text}` timestamps — needed for boundary detection. |
-| `segmentation.py` | `detect_blocks` — sends the segment list to an LLM (gpt-4.1-mini), which groups segments into distinct commercial/content blocks wherever the topic clearly shifts, returning `{start, end, text}` per block. This is the boundary-detection step, done via topic grouping rather than silence detection, because real content often has no silence gap between spots. |
-| `slicing.py` | `slice_audio` — uses `pydub` (+ `audioop-lts`, needed as a backport since Python 3.13 dropped stdlib `audioop`) to cut the original `.wav` at block boundaries and export one file per block into `output_blocks/`. |
-| `extraction.py` | `extract_keywords_and_name` — LLM call (gpt-4.1-mini) that reads a block's transcript and returns `{keywords, name}` as structured JSON. Output is forced to Spanish (brand names kept verbatim). Handles empty/garbled transcripts by returning `"Clip no identificado"` instead of hallucinating a brand. |
-| `main.py` | Orchestrates the full pipeline per file in `input/`: transcribe segments → detect blocks → slice audio → per block, extract keywords/name → write everything to `output.txt`. |
+| `src/audio.py` | Whisper transcription with the windowing + fuzzy-stitch fix described above. This is the production transcription path. |
+| `src/extraction.py` | Title/keyword generation via LLM — unchanged, still usable. |
+| `src/tool1.py` | Reads every `.wav`/`.mp3` in `client_data/wav2`, transcribes (no DB crop, no vocabulary prompt — transcripts are intentionally left "bare" since the windowing fix already improved accuracy without needing steering), extracts spot details, writes results. `main()` currently prints per-file rather than writing a CSV (a prior concurrent/CSV-writing version exists in git history if needed again). |
+| `src/db/db.py`, `src/db/base.py` | SQLAlchemy engine + declarative base for DB access, still used by `scripts/` (renamed from `bootstrap/` during a repo cleanup, 2026-08-17). |
+| `scripts/match_wav2_to_db.py` | One-off: matches `client_data/wav2` files to `ALTAS_SARA_FP` rows via `DETALLE`, builds `client_data/real_audio_db/` + manifest. |
+| `scripts/extract_spots.py` | Older, unrelated bootstrap script from an earlier session (full-day XET-FM audio → cropped candidate wavs using testigo-relative offset math) — superseded by `client_data/wav2` now being available directly, kept for reference. |
+| `scripts/crop_sample.py` | Diagnostic: random-samples `real_audio_db` crops for manual listening. |
+| `scripts/create_mentions_table.py` | Creates Tool 2's output table `MENCIONES_COMERCIALES` — written, not yet run (blocked, see `docs/progress.md`). |
+| `segmentation.py`, `slicing.py` | No longer needed for Tool 1 — clips arrive pre-cropped. |
 
-**Dependencies added:** `openai`, `python-dotenv`, `pydub`, `audioop-lts`. `OPENAI_API_KEY` loads from `.env` (gitignored) via `python-dotenv`.
+## Open questions for the client
 
-**Storage:** currently stubbed as local files (`output_blocks/*.wav` + `output.txt`) — no DB wiring yet. SQL Server is a hard constraint from the client but schema/destination is still an open question.
+1. ~~Write target~~ — **resolved 2026-08-17**, see the `ALTAS_SARA_FP` entry above: writes onto the matching row, reuses status 4.
+2. **Dedup logic** — "spots that repeat more than once" needs a concrete matching strategy (audio fingerprint similarity? matching `VERSION`/duration?). `ID_ALTAS_SARA_FP_PADRE` looks like it's meant for parent/duplicate linking but is `NULL` in every sample seen — confirm intended use.
+3. **File access scope** — the ~44% of `client_data/wav2` files with no matching DB row: worth asking the client whether that's expected (different environment/date range) or a sign the DB snapshot (`OrbitMedia_Test`) is incomplete relative to the wav set they shared.
+4. **`DURACION` accuracy** — worth flagging to the client that `ALTAS_SARA_FP.DURACION` appears to sometimes undercut real ad length; may be worth asking how it's computed upstream, though it's no longer load-bearing for Tool 1 now that cropping isn't used.
 
-### Validation so far
+## Current access constraints (as of 2026-08-17)
 
-`audio2.wav` (a ~6 min radio segment) was correctly split into 14 distinct blocks — station jingles, a water-safety PSA, a jobs announcement, a human rights program spot, several show promos, a sports/ticket ad, a literacy campaign spot, a Congress equality spot, and an infrastructure ad — each cut into its own `.wav` with an accurate name and keyword list. Notably:
-- The topic-grouping approach correctly separated blocks that ran directly into each other with **no silence gap**, which a pure silence-detection approach would have missed.
-- A jingle-only block (no commercial content) was correctly labeled `Clip no identificado` with empty keywords instead of a hallucinated brand.
+Neither tool has access to the client's **live/production** DB or the actual `SARA<n>` capture machines. Everything built so far runs against `OrbitMedia_Test` (a SQL Server test DB the client set up for this project — see `docs/raw-notes/client-db-messages.md`) plus whatever files the client has separately shared (`client_data/wav2`, etc.). Treat schema/status-code findings from that test DB as reliable for structure, but do not assume the tools can run against real production data yet — that requires access that hasn't landed.
 
-## What's Next
+## Tool 2 — now partially scoped
 
-**Hardening Tool 1** (not yet done):
-- Spot-check the actual sliced audio (not just transcript boundaries) to confirm cuts aren't clipping words at block edges.
-- Test against messier input — this sample was clean/back-to-back; real unidentified clips from the client may have overlapping speech/music or more ambiguous transitions.
-- Check cost/latency at realistic volume — current pipeline does 1 Whisper transcription + 2 LLM calls (segmentation, then extraction per block) per input file.
+Tool 2 targets `SEGMENTO_SARA` rows discarded (by locutor, noticiero, or song) or oversized — not the `ALTAS_SARA_FP` queue Tool 1 uses. Full pipeline detail in the artifact linked above, section 02/05 (note: the artifact predates the confirmations below).
 
-**Tool 2** — not started. Needs a speech-vs-music filter (keep only host/commentator audio) and a sponsored-section detector within that filtered stream, distinct from Tool 1's bounded-clip trimming.
-
-**Open questions still outstanding** (see `requirements.md`):
-- Tool 2 keyword scope: brand/company names only, or news topics too? (needs client confirmation)
-- Where/how should results be stored — schema TBD for both tools, SQL Server is the hard constraint.
-- Labeled examples from the client for both boundary-detection (Tool 1) and sponsored-section detection (Tool 2), to calibrate against real cases rather than just the two sample files we have.
-
-**Deliberately deferred:** client integration mechanics (how audio actually arrives), and the "service" framing (dashboard/API/alerts) — revisit once both tools work reliably in isolation.
+- **Discard catalog table found**: `CAT_ESTATUS_SEGMENTO`, joined via `SEGMENTO_SARA.ID_ESTATUS_SEGMENTO`. Confirmed live against `OrbitMedia_Test`.
+- **Client confirmed (2026-08-17)** which discard reasons Tool 2 should cover: **Descartado por Locutor** (`ID_ESTATUS_SEGMENTO = 10`), **Descartado por Noticiero** (`11`), **Descartado por Cancion** (`12`). Wired into `src/tool2.py` as `TOOL2_ESTATUS_IDS`.
+- **Still unconfirmed**: the "oversized" case isn't a status code at all — it'd be a `DURACION` threshold, value not yet given by the client. Also still open: `ID_TIPO_SEGMENTO` (a second, separate code on `SEGMENTO_SARA`) doesn't map to anything confirmed yet, but doesn't seem to be needed now that the three discard statuses above cover the request.
+- **`fetch_discarded_segments()`** in `src/tool2.py` queries `SEGMENTO_SARA` for those three statuses (tested live — returns 11M+ rows unfiltered against `OrbitMedia_Test`, so it takes an `id_testigo_min` bound). It returns only `ID_SEGMENTO`/`ID_TESTIGO`/`INICIO`/`DURACION` — **no wav file**. Resolving an actual playable clip still needs a join to `TESTIGO_SARA` (for `HOSTNAME`/`ARCHIVO`) plus a crop step, which isn't written yet and is blocked on the file-access gap above.
+- Transcription (`transcribe_audio_segments`, reused from Tool 1) and brand-mention extraction (`extract_brand_mentions` in `src/extraction.py`, new) are built and work standalone on any local wav file — just not yet wired to the DB-sourced segments.
+- **Output table designed, not yet created**: `scripts/create_mentions_table.py` has the DDL for `MENCIONES_COMERCIALES` (idempotent, safe to re-run) and `src/tool2.py` has `save_mentions()` to insert into it. **Blocked**: the DB login currently in use only has `SELECT` — `CREATE TABLE permission denied in database 'OrbitMedia_Test'` when tried live. Needs either write access granted on this login, or the client running `create_mentions_table.py` (or the DDL inside it) themselves.
+- Even once the table exists, `main()`'s local-file test loop still can't call `save_mentions()` — there's no mapping yet from a local wav filename to a real `SEGMENTO_SARA` row (`ID_SEGMENTO`/`ID_TESTIGO`/`ID_ESTATUS_SEGMENTO`), same file-access gap as above. `process()` takes an optional `segment` dict for when that link exists.

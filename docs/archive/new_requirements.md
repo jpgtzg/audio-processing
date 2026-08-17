@@ -1,3 +1,5 @@
+> **Archived.** Mid-project requirement update from the client — kept for history. Superseded by `docs/handoff.md` and `docs/progress.md`, which reflect what's actually confirmed and built since (e.g. Tool 1's write target is now resolved, Tool 2's discard codes are confirmed as locutor/noticiero/cancion rather than open-ended "songs or other reasons").
+
 ## Tool1
 
 - The .wav files are already available and croppe in the database

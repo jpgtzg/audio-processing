@@ -17,3 +17,6 @@ output.txt
 client_data/
 tool1_input/
 output/
+
+# Meeting recording -- large binary, not worth tracking in git
+docs/junta/
