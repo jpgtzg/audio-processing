@@ -37,9 +37,9 @@ Extract:
 - "categoria": the single best-matching category for this clip, chosen from this exact list (copy the
   string exactly as written, including any trailing "*"): {json.dumps(categorias, ensure_ascii=False)}
   If truly nothing on the list fits (e.g. a station jingle with no commercial content), use null.
-- "anunciante": the company/organization behind the ad (e.g. "GRUPO H.E.B.", "GENERAL MOTORS"). If the
-  transcript only gives a consumer-facing brand and the parent company isn't identifiable from it, reuse
-  the brand name here.
+- "anunciante": the company/organization actually paying for and running the ad (e.g. "GRUPO H.E.B.",
+  "GENERAL MOTORS"). If the transcript only gives a consumer-facing brand and the parent company isn't
+  identifiable from it, reuse the brand name here.
 - "marca": the full brand/product name as said in the transcript (e.g. "H.E.B. TIENDA DE AUTOSERVICIO").
 - "marca_corto": a short version of the brand name (e.g. "H.E.B.", "CHEVROLET").
 - "version": a short tag summarizing the spot's key promotional content (offer, price, tagline) in the
@@ -48,6 +48,16 @@ Extract:
   transcript (e.g. "válido hasta el 19 de julio" -> "2026-07-19"). Otherwise null. Do not guess or infer
   a date that isn't spoken.
 - "keywords": brand names, product names, and other commercial-relevant entities mentioned.
+
+**A single commercial often lists several other brands' products as part of its own pitch** — a supermarket
+or department-store spot listing weekly discounts will rattle off product brands one after another (e.g.
+"Colgate crema dental, Axion desodorante, Nivea crema líquida, todo con descuento"). Those listed products
+are NOT the advertiser: the advertiser/marca is the store or business actually running and paying for the
+spot (e.g. "SORIANA", "H.E.B."), even though it's never the loudest or most-repeated name in the audio. Do
+not pick one of the listed product brands as "anunciante"/"marca" just because it's mentioned clearly or
+often. Put the listed product brands in "keywords" instead — that's exactly what that field is for. If the
+actual host/store name isn't stated in the transcript at all (the clip starts mid-list, for example), set
+"anunciante"/"marca" to null rather than guessing one of the listed products.
 
 Write all output text in Spanish (brand/product names should stay as mentioned in the transcript, but
 any descriptive wording you generate must be in Spanish).
