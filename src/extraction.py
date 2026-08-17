@@ -1,79 +1,41 @@
 import json
 import os
+from functools import lru_cache
 
 from dotenv import load_dotenv
 from openai import OpenAI
+from sqlalchemy import text
+
+from src.db.db import engine
 
 load_dotenv()
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-# Snapshot of the CATEGORIA taxonomy from the client's own monitoring DB
-# (BD Monitoreo - Radio Monterrey.xlsx), so extraction output lines up with
-# their existing schema instead of inventing a new one.
-CATEGORIAS = [
-    "ABARROTES / TIENDAS*", "ACEITES Y LUBRICANTES AUTOMOTRICES", "AFORES",
-    "AGENCIAS DE VIAJES*", "AIRES ACONDICIONADOS / CLIMAS*", "ALIMENTOS / PRODUCTOS / CADENAS",
-    "ALIMENTOS PARA ANIMALES", "ALIMENTOS Y COMPLEMENTOS REDUCTIVOS", "ALMACENES DEPARTAMENTALES*",
-    "ALMACENES Y TIENDAS DE ROPA*", "ANDAMIOS TUBULARES*", "ASEGURADORAS",
-    "ASESORIAS PROFESIONALES / CONSULTORES", "ATUNES / SARDINAS", "AUDITORIOS / EVENTOS",
-    "AUTOMOVILES / MARCAS", "AUTOPISTAS DE CONCESION FEDERAL", "AUTOS / AGENCIAS Y DISTRIBUIDORES",
-    "AUTOSERVICIOS*", "AVISOS DE OCASION*", "BAILES Y EVENTOS POPULARES", "BANCOS",
-    "BANOS / MUEBLES Y ACCESORIOS", "BARES / MUSICA EN VIVO", "BOTANAS",
-    "CADENAS TELEVISORAS / TELEVISION", "CAFETERIAS", "CALZADO / MARCAS / VENTA POR CATALOGO",
-    "CAMARA DE DIPUTADOS*", "CAMARA DE SENADORES*", "CAMARAS EMPRESARIALES*",
-    "CAMPANAS DE PARTIDOS POLITICOS", "CARNICERIAS*", "CARTON / TIENDAS / FABRICAS*",
-    "CASAS DE BOLSA", "CASAS FUNERALES / SERVICIOS", "CASINOS / CENTROS DE APUESTAS Y JUEGOS",
-    "CEMENTO / MARCAS*", "CENTROS COMERCIALES*", "CENTROS DE COMERCIO INTERNACIONAL",
-    "CENTROS EMPRESARIALES*", "CERVEZAS", "CHOCOLATE EN POLVO / LIQUIDO / CASERO",
-    "CINES / AUTOCINEMAS", "CLINICAS / CONSULTORIOS", "CLINICAS ODONTOLOGICAS / SERVICIOS",
-    "CLOSETS / ROPEROS", "CLUBES DE PRECIOS", "CLUBES DEPORTIVOS / RECREATIVOS",
-    "COLCHONERIAS / TIENDAS DE COLCHONES*", "COLCHONES / MARCAS", "COSMETICOS / MARCAS",
-    "CURSOS DE ESPECIALIZACION / ACTUALIZACION", "CURSOS DE SUPERACION PERSONAL",
-    "DECORACION DE INTERIORES", "DEPOSITOS / EXPENDIOS DE BEBIDAS*", "DETERGENTES",
-    "DIRECTORIOS TURISTICOS", "DISQUERAS / COMPANIAS / CASAS*",
-    "DISTRIBUIDORES DE EQUIPO CELULAR / SERVICIOS", "ENFRIADORES / CALENTADORES DE AGUA*",
-    "ENTIDADES PARAESTATALES", "EQUIPOS Y SISTEMAS GPS", "ESPECIAL EN RADIO Y TV*",
-    "ESTADIOS / ARENAS DEPORTIVAS", "EXPOSICIONES / SALAS / CENTROS", "FARMACIAS*",
-    "FERIAS POPULARES", "FERRETERIAS Y TIENDAS DE MAT. CONSTRUCCION", "FONDOS DE INVERSION",
-    "FRACCIONAMIENTOS/CONJUNTOS HABITACIONALES*", "FUMIGACIONES / SERVICIO*",
-    "FUNERARIAS / PARQUES FUNERARIOS", "GAS NATURAL Y LP / INDUSTRIAL Y SERVICIO*",
-    "GASOLINERAS*", "GIMNASIOS / SPA*", "GOBIERNO ESTATAL / CAMPANAS*",
-    "GOBIERNO FEDERAL / CAMPANAS*", "GOBIERNO MUNICIPAL / CAMPANAS*",
-    "GRUAS / TRACTOCAMIONES / SERVICIO", "GRUPOS RADIOFONICOS / EMISORAS",
-    "HAMBURGUESAS / CADENAS", "HELADOS / NIEVES", "HERRAMIENTAS INDUSTRIALES Y DOMESTICAS*",
-    "HOTELES / TIEMPOS COMPARTIDOS*", "IMPERMEABILIZANTES / SILICONES*",
-    "INMOBILIARIAS / BIENES RAICES*", "INSTITUCIONES DE BENEFICENCIA*",
-    "INSTITUTOS ELECTORALES*", "INTERNET / PROVEEDORES DE SERVICIO",
-    "JOYERIA / PLATERIA / ORFEBRERIA*", "LINEAS AEREAS*", "LUZ Y SONIDO",
-    "MEDICAMENTOS EN GENERAL", "MEDICOS ESPECIALISTAS", "MENSAJERIA Y PAQUETERIA",
-    "MERMELADAS", "MOTOCICLETAS / AGENCIAS / DISTRIBUIDORAS", "MUEBLERIAS PARA EL HOGAR*",
-    "OFTALMOLOGOS / OCULISTAS", "ORGANIZACIONES FINANCIERAS", "PAN / LINEA DE PRODUCTOS*",
-    "PAPELERIAS*", "PARQUES DE DIVERSIONES / CENTROS", "PERIODICOS",
-    "PILAS Y BATERIAS / MARCAS", "PINTURAS Y RECUBRIMIENTOS*", "PISOS Y AZULEJOS",
-    "PIZZAS / PIZZERIAS", "PODER JUDICIAL DE LA FEDERACION*", "POLLO FRITO / ASADO",
-    "PORTALES INFORMATIVOS Y DE NOTICIAS", "PROCURADURIA FEDERAL DEL CONSUMIDOR",
-    "PROFESIONALES / SERVICIOS", "PROGRAMA RADIOFONICO*", "PROGRAMA TELEVISIVO*",
-    "RECARGA DE CARTUCHOS TONER Y TINTA", "REFACCIONARIAS / TIENDAS DE AUTOPARTES",
-    "REFRESCOS", "RENTA DE AUTOS Y AUTOBUSES", "RESTAURANTES",
-    "SALONES DE BELLEZA / ESTETICAS*", "SALSAS", "SECRETARIAS DE ESTADO*",
-    "SERVICIOS DE STREAMING DE AUDIO Y VIDEO", "SERVICIOS FINANCIEROS",
-    "SISTEMAS Y PROGRAMAS DE COMPUTO*", "SOFIPO - SOC FIN POPULAR", "SORTEOS*",
-    "TARJETAS DE CREDITO", "TEATROS", "TELEFONIA MOVIL / CELULAR",
-    "TELEVISION SATELITAL", "TIENDAS DE CONVENIENCIA*", "TIENDAS DE IMPORTACION*",
-    "TRANSPORTE FORANEO*", "TRIPLE PLAY / TELEF / TV CABLE / INTERNET",
-    "UNIVERSIDADES / CENTROS DE ESTUDIOS PROFESIONALES", "VALES DE DESPENSA / BONOS",
-    "VINOS Y LICORES / EXPENDIOS*", "ZAPATERIAS / TIENDAS*",
-]
 
-SYSTEM_PROMPT = f"""You are helping a media monitoring company that tracks commercials on radio and TV.
+@lru_cache(maxsize=1)
+def get_categorias() -> list[str]:
+    """CATEGORIA taxonomy, pulled live from SUBCAT3.TIT_SUB3 -- the bottom level of
+    the client's 4-level CATEGORIAS -> SUBCAT1 -> SUBCAT2 -> SUBCAT3 hierarchy,
+    which is what COMERCIALES.CVE_SUB3 (and this extraction's "categoria" field)
+    actually hangs off. Cached per-process since the taxonomy changes rarely."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT TIT_SUB3 FROM SUBCAT3 ORDER BY TIT_SUB3")
+        ).scalars().all()
+    return list(rows)
+
+
+def _build_system_prompt() -> str:
+    categorias = get_categorias()
+    return f"""You are helping a media monitoring company that tracks commercials on radio and TV.
 You will be given the transcript of a short audio clip suspected to be a commercial, and must extract it
 into the same fields the client already uses in their monitoring database, so the output can be merged
 directly into their existing records.
 
 Extract:
 - "categoria": the single best-matching category for this clip, chosen from this exact list (copy the
-  string exactly as written, including any trailing "*"): {json.dumps(CATEGORIAS, ensure_ascii=False)}
+  string exactly as written, including any trailing "*"): {json.dumps(categorias, ensure_ascii=False)}
   If truly nothing on the list fits (e.g. a station jingle with no commercial content), use null.
 - "anunciante": the company/organization behind the ad (e.g. "GRUPO H.E.B.", "GENERAL MOTORS"). If the
   transcript only gives a consumer-facing brand and the parent company isn't identifiable from it, reuse
@@ -117,7 +79,7 @@ def extract_spot_details(transcript: str) -> dict:
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": _build_system_prompt()},
             {"role": "user", "content": transcript},
         ],
         response_format={"type": "json_object"},
