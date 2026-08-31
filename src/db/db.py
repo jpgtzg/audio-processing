@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.db.base import Base
-from src.models.settings import settings
+from src.db.settings import settings
 
 # This is a SQL Server 2008 box. Modern ODBC drivers (pyodbc + Driver 17/18) fail
 # during TLS negotiation against it, and Driver 18 isn't even installed on this

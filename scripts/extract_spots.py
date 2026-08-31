@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 import pymssql
 from dotenv import load_dotenv
 
-from src.models import SpotDetails
+from src.db import SpotDetails
 
 load_dotenv()
 
