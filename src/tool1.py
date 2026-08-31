@@ -1,7 +1,7 @@
 import os
 import re
 
-from src.audio import transcribe_audio
+from src.audio import transcribe_full_text
 from src.extraction import extract_spot_details
 
 INPUT_DIR = "output/20260813_152558"
@@ -28,7 +28,7 @@ def natural_sort_key(filename: str) -> list:
 
 def process(filename: str) -> dict:
     path = os.path.join(INPUT_DIR, filename)
-    transcript = transcribe_audio(path)
+    transcript = transcribe_full_text(path)
 
     extracted = extract_spot_details(transcript)
 

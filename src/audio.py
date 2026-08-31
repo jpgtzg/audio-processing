@@ -5,7 +5,6 @@ import tempfile
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydub import AudioSegment
-from pydub.silence import detect_nonsilent
 
 load_dotenv()
 
@@ -16,46 +15,6 @@ CHUNK_DURATION_MS = 20 * 60 * 1000
 
 WINDOW_DURATION_MS = 4 * 1000
 WINDOW_OVERLAP_MS = 1500
-
-
-def remove_silence(
-    filepath: str,
-    output_path: str | None = None,
-    min_silence_len: int = 500,
-    silence_thresh_offset: int = 16,
-    keep_silence: int = 200,
-) -> str:
-    """Strips silent stretches (at least `min_silence_len` ms) from the audio,
-    keeping `keep_silence` ms of padding around each remaining chunk so words
-    aren't clipped. Returns the path to the written file (defaults to
-    overwriting a temp copy alongside the original name)."""
-    audio = AudioSegment.from_file(filepath)
-    silence_thresh = audio.dBFS - silence_thresh_offset
-
-    nonsilent_ranges = detect_nonsilent(
-        audio,
-        min_silence_len=min_silence_len,
-        silence_thresh=silence_thresh,
-    )
-
-    if not nonsilent_ranges:
-        trimmed = audio
-    else:
-        trimmed = AudioSegment.empty()
-        for start_ms, end_ms in nonsilent_ranges:
-            start_ms = max(0, start_ms - keep_silence)
-            end_ms = min(len(audio), end_ms + keep_silence)
-            trimmed += audio[start_ms:end_ms]
-
-    if output_path is None:
-        base, ext = os.path.splitext(filepath)
-        output_path = f"{base}_trimmed{ext or '.wav'}"
-
-    trimmed.export(
-        output_path, format=os.path.splitext(output_path)[1].lstrip(".") or "wav"
-    )
-    return output_path
-
 
 def _iter_audio_chunks(filepath: str):
     """Yields (offset_seconds, chunk_filepath) pairs covering the whole file, always
@@ -88,14 +47,14 @@ def _make_windows(
     audio: AudioSegment,
     window_duration_ms: int = WINDOW_DURATION_MS,
     window_overlap_ms: int = WINDOW_OVERLAP_MS,
-) -> list[AudioSegment]:
-    """Splits audio into overlapping window_duration_ms windows. A partial trailing
-    window is always folded into the previous one instead of standing alone, since
-    short, mostly-padding tail windows are prone to hallucinating unrelated filler
-    content."""
+) -> list[tuple[int, AudioSegment]]:
+    """Splits audio into overlapping window_duration_ms windows, returned as
+    (start_ms, window_audio) pairs. A partial trailing window is always folded
+    into the previous one instead of standing alone, since short, mostly-padding
+    tail windows are prone to hallucinating unrelated filler content."""
     duration_ms = len(audio)
     if duration_ms <= window_duration_ms:
-        return [audio]
+        return [(0, audio)]
 
     step_ms = window_duration_ms - window_overlap_ms
     starts = list(range(0, duration_ms, step_ms))
@@ -104,9 +63,10 @@ def _make_windows(
         starts.pop()
 
     windows = [
-        audio[start_ms : start_ms + window_duration_ms] for start_ms in starts[:-1]
+        (start_ms, audio[start_ms : start_ms + window_duration_ms])
+        for start_ms in starts[:-1]
     ]
-    windows.append(audio[starts[-1] : duration_ms])
+    windows.append((starts[-1], audio[starts[-1] : duration_ms]))
     return windows
 
 
@@ -146,7 +106,7 @@ def _stitch_transcripts(
     return merged.strip()
 
 
-def transcribe_audio(
+def transcribe_full_text(
     filepath: str,
     prompt: str = "",
     window_duration_ms: int = WINDOW_DURATION_MS,
@@ -169,7 +129,7 @@ def transcribe_audio(
 
     audio = AudioSegment.from_file(filepath)
     texts = []
-    for chunk in _make_windows(audio, window_duration_ms, window_overlap_ms):
+    for _start_ms, chunk in _make_windows(audio, window_duration_ms, window_overlap_ms):
         tmp_path = tempfile.mktemp(suffix=".wav")
         chunk.export(tmp_path, format="wav")
         try:
@@ -187,7 +147,7 @@ def transcribe_audio(
     return _stitch_transcripts(texts)
 
 
-def transcribe_audio_segments(filepath: str) -> list[dict]:
+def transcribe_timestamped_segments(filepath: str) -> list[dict]:
     segments = []
     for offset_seconds, chunk_path in _iter_audio_chunks(filepath):
         with open(chunk_path, "rb") as f:

@@ -136,7 +136,7 @@ Respond with JSON only, matching this shape:
 
 def extract_brand_mentions(segments: list[dict]) -> list[dict]:
     """Given timestamped transcript segments (as returned by
-    audio.transcribe_audio_segments), finds brand/advertiser mentions and resolves
+    audio.transcribe_timestamped_segments), finds brand/advertiser mentions and resolves
     each one's segment-index span back to real start/end times in seconds."""
     if not segments:
         return []

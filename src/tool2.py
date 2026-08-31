@@ -3,7 +3,7 @@ import re
 
 from sqlalchemy import bindparam, text
 
-from src.audio import transcribe_audio_segments
+from src.audio import transcribe_timestamped_segments
 from src.db.db import engine
 from src.extraction import extract_brand_mentions
 
@@ -12,25 +12,22 @@ from src.extraction import extract_brand_mentions
 # which is Tool 1's ALTAS_SARA_FP-backed set) -- point this at whatever sample set
 # is available for now. See scripts/slice_sample.py for one way to populate this
 # folder from client_data/Audios Completos XET-FM.
-INPUT_DIR = "client_data/tool2_input"
+INPUT_DIR = "tool2_input"
 
 FIELDS = ["filename", "marca", "anunciante", "start", "end", "transcript"]
 
 # SEGMENTO_SARA.ID_ESTATUS_SEGMENTO links to CAT_ESTATUS_SEGMENTO (confirmed live
 # against the client's test DB). Client confirmed (2026-08-17) Tool 2 should cover
 # these three discard reasons:
-ESTATUS_DESCARTADO_LOCUTOR = 10  # "Descartado por Locutor"
-ESTATUS_DESCARTADO_NOTICIERO = 11  # "Descartado por Noticiero"
-ESTATUS_DESCARTADO_CANCION = 12  # "Descartado por Cancion"
+ESTATUS_DESCARTADO_LOCUTOR: int = 10  # "Descartado por Locutor"
+ESTATUS_DESCARTADO_NOTICIERO: int = 11  # "Descartado por Noticiero"
+ESTATUS_DESCARTADO_CANCION: int = 12  # "Descartado por Cancion"
 
-TOOL2_ESTATUS_IDS = (
+TOOL2_ESTATUS_IDS: list[int] = [
     ESTATUS_DESCARTADO_LOCUTOR,
     ESTATUS_DESCARTADO_NOTICIERO,
     ESTATUS_DESCARTADO_CANCION,
-)
-
-# "Oversized" isn't a status at all -- it'd be a DURACION threshold, still
-# unconfirmed with the client.
+]
 
 
 def fetch_discarded_segments(
@@ -55,9 +52,14 @@ def fetch_discarded_segments(
     ).bindparams(bindparam("estatus_ids", expanding=True))
 
     with engine.connect() as conn:
-        rows = conn.execute(
-            query, {"estatus_ids": list(estatus_ids), "id_testigo_min": id_testigo_min}
-        ).mappings().all()
+        rows = (
+            conn.execute(
+                query,
+                {"estatus_ids": list(estatus_ids), "id_testigo_min": id_testigo_min},
+            )
+            .mappings()
+            .all()
+        )
     return [dict(row) for row in rows]
 
 
@@ -79,7 +81,7 @@ def process(filename: str, segment: dict | None = None) -> list[dict]:
     without id_segmento/id_testigo/id_estatus_segmento and save_mentions() will
     reject them."""
     path = os.path.join(INPUT_DIR, filename)
-    segments = transcribe_audio_segments(path)
+    segments = transcribe_timestamped_segments(path)
     transcript = " ".join(s["text"] for s in segments)
 
     mentions = extract_brand_mentions(segments)
@@ -153,7 +155,7 @@ def main():
     # save_mentions() from fetch_discarded_segments() + process(file, segment)
     # instead of this loop.
     files = sorted(
-        (f for f in os.listdir(INPUT_DIR) if f.endswith((".wav", ".mp3"))),
+        (f for f in os.listdir(INPUT_DIR) if f.endswith((".wav", ".mp3", ".mp4"))),
         key=natural_sort_key,
     )
 

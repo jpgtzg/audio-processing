@@ -104,10 +104,10 @@ Once `client_data/real_audio_db/` existed with real `INICIO`/`DURACION` values, 
 | `src/tool1.py` | Reads every `.wav`/`.mp3` in `client_data/wav2`, transcribes (no DB crop, no vocabulary prompt — transcripts are intentionally left "bare" since the windowing fix already improved accuracy without needing steering), extracts spot details, writes results. `main()` currently prints per-file rather than writing a CSV (a prior concurrent/CSV-writing version exists in git history if needed again). |
 | `src/db/db.py`, `src/db/base.py` | SQLAlchemy engine + declarative base for DB access, still used by `scripts/` (renamed from `bootstrap/` during a repo cleanup, 2026-08-17). |
 | `scripts/match_wav2_to_db.py` | One-off: matches `client_data/wav2` files to `ALTAS_SARA_FP` rows via `DETALLE`, builds `client_data/real_audio_db/` + manifest. |
-| `scripts/extract_spots.py` | Older, unrelated bootstrap script from an earlier session (full-day XET-FM audio → cropped candidate wavs using testigo-relative offset math) — superseded by `client_data/wav2` now being available directly, kept for reference. |
 | `scripts/crop_sample.py` | Diagnostic: random-samples `real_audio_db` crops for manual listening. |
 | `scripts/create_mentions_table.py` | Creates Tool 2's output table `MENCIONES_COMERCIALES` — written, not yet run (blocked, see `docs/progress.md`). |
-| `segmentation.py`, `slicing.py` | No longer needed for Tool 1 — clips arrive pre-cropped. |
+
+**Removed in a repo cleanup (2026-08-30), all confirmed to have zero remaining callers**: `src/segmentation.py`/`slicing.py` (no longer needed for Tool 1 — clips arrive pre-cropped, already noted above); `scripts/extract_spots.py` (older bootstrap script, superseded by `client_data/wav2`, and had bit-rotted — imported a `SpotDetails` type that no longer existed) plus its now-orphaned `scripts/freetds.conf` copy; `audio.py`'s `remove_silence()` (part of the old boundary-detection pipeline, unused since clips arrive pre-cropped).
 
 ## Open questions for the client
 
