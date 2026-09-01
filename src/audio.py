@@ -108,7 +108,6 @@ def _stitch_transcripts(
 
 def transcribe_full_text(
     filepath: str,
-    prompt: str = "",
     window_duration_ms: int = WINDOW_DURATION_MS,
     window_overlap_ms: int = WINDOW_OVERLAP_MS,
 ) -> str:
@@ -120,7 +119,6 @@ def transcribe_full_text(
                     model="whisper-1",
                     file=f,
                     response_format="json",
-                    prompt=prompt,
                     language="es",
                 )
             texts.append(result.text)
@@ -138,7 +136,6 @@ def transcribe_full_text(
                     model="whisper-1",
                     file=f,
                     response_format="json",
-                    prompt=prompt,
                 )
             texts.append(result.text)
         finally:

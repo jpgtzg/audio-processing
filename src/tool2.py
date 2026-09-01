@@ -7,11 +7,6 @@ from src.audio import transcribe_timestamped_segments
 from src.db.db import engine
 from src.extraction import extract_brand_mentions
 
-# Mirrors tool1.py's INPUT_DIR pattern. Unlike Tool 1, the client hasn't shared a
-# local wav dump of discarded/oversized segments yet (client_data only has wav2,
-# which is Tool 1's ALTAS_SARA_FP-backed set) -- point this at whatever sample set
-# is available for now. See scripts/slice_sample.py for one way to populate this
-# folder from client_data/Audios Completos XET-FM.
 INPUT_DIR = "tool2_input"
 
 FIELDS = ["filename", "marca", "anunciante", "start", "end", "transcript"]
