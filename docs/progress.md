@@ -52,7 +52,6 @@ Was deferred at project start ("revisit after Tool 1 ships"); work began 2026-08
 - **Need a fresher `OrbitMedia_Test` snapshot (or live DB access)** to validate Tool 2's file-resolution path against recordings that still actually exist on the SARA hosts — the current snapshot's `TESTIGO_SARA`/`SEGMENTO_SARA` rows all point at files older than the shares' retention window. Worth asking the client directly.
 
 ### Not yet built
-- **"Oversized" segment detection** — not a status code, would be a `DURACION` threshold; no value confirmed by the client yet.
 - **Segment-offset units** — `crop_segment()` assumes `SEGMENTO_SARA.INICIO`/`DURACION` are seconds (distinct from `ALTAS_SARA_FP`'s millisecond convention); not yet confirmed by ear the way Tool 1's units were.
 
 ### DB write access — resolved (2026-09-03)
@@ -66,7 +65,5 @@ Client confirmed write access is now granted. Verified directly (not just re-tri
 
 ## Suggested next asks for the client
 
-- Grant write access (or confirm who can run `scripts/create_mentions_table.py`) on `OrbitMedia_Test`.
 - Confirm Tool 1's input status is literally `2` (Recortado).
-- Confirm a `DURACION` threshold for "oversized" segments (Tool 2).
-- Timeline for live DB / `SARA<n>` file access, since both tools are currently unverifiable against real production data without it.
+- Refresh the `OrbitMedia_Test` snapshot (or grant live DB access) so Tool 2 can be validated against recordings that still exist on the live SARA shares.

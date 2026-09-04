@@ -15,7 +15,7 @@ Full raw notes live in `docs/raw-notes/`. The original scope docs (now supersede
 Two standalone tools, deliberately decoupled from the client's server/API framing:
 
 - **Tool 1 — active, most-built.** Transcribe already-cropped candidate clips, dedupe repeats, generate a title/label, write the result back onto the source `ALTAS_SARA_FP` row for a capturista to validate as a new commercial.
-- **Tool 2 — active, partially built.** Brand-mention detection inside discarded segments (locutor/noticiero/song discards, and oversized clips). Was deferred at project start; work began 2026-08-17.
+- **Tool 2 — active, partially built.** Brand-mention detection inside discarded segments (locutor/noticiero/song discards). Was deferred at project start; work began 2026-08-17.
 
 ## Requirements changed mid-project — read this before touching Tool 1's code
 
@@ -124,11 +124,10 @@ Neither tool has access to the client's **live/production** DB or the actual `SA
 
 ## Tool 2 — now partially scoped
 
-Tool 2 targets `SEGMENTO_SARA` rows discarded (by locutor, noticiero, or song) or oversized — not the `ALTAS_SARA_FP` queue Tool 1 uses. Full pipeline detail in the artifact linked above, section 02/05 (note: the artifact predates the confirmations below).
+Tool 2 targets `SEGMENTO_SARA` rows discarded (by locutor, noticiero, or song) — not the `ALTAS_SARA_FP` queue Tool 1 uses. Full pipeline detail in the artifact linked above, section 02/05 (note: the artifact predates the confirmations below).
 
 - **Discard catalog table found**: `CAT_ESTATUS_SEGMENTO`, joined via `SEGMENTO_SARA.ID_ESTATUS_SEGMENTO`. Confirmed live against `OrbitMedia_Test`.
-- **Client confirmed (2026-08-17)** which discard reasons Tool 2 should cover: **Descartado por Locutor** (`ID_ESTATUS_SEGMENTO = 10`), **Descartado por Noticiero** (`11`), **Descartado por Cancion** (`12`). Wired into `src/tool2.py` as `TOOL2_ESTATUS_IDS`.
-- **Still unconfirmed**: the "oversized" case isn't a status code at all — it'd be a `DURACION` threshold, value not yet given by the client. Also still open: `ID_TIPO_SEGMENTO` (a second, separate code on `SEGMENTO_SARA`) doesn't map to anything confirmed yet, but doesn't seem to be needed now that the three discard statuses above cover the request.
+- **Client confirmed (2026-08-17)** which discard reasons Tool 2 should cover: **Descartado por Locutor** (`ID_ESTATUS_SEGMENTO = 10`), **Descartado por Noticiero** (`11`), **Descartado por Cancion** (`12`). Wired into `src/tool2.py` as `TOOL2_ESTATUS_IDS`. The "oversized" case discussed earlier in the project isn't required — client confirmed (2026-09-03) it's not part of scope. Still open: `ID_TIPO_SEGMENTO` (a second, separate code on `SEGMENTO_SARA`) doesn't map to anything confirmed yet, but doesn't seem to be needed now that the three discard statuses above cover the request.
 - **`fetch_discarded_segments()`** in `src/tool2.py` queries `SEGMENTO_SARA` for those three statuses (tested live — returns 11M+ rows unfiltered against `OrbitMedia_Test`, so it takes an `id_testigo_min` bound). It returns only `ID_SEGMENTO`/`ID_TESTIGO`/`INICIO`/`DURACION` — **no wav file**. Resolving an actual playable clip still needs a join to `TESTIGO_SARA` (for `HOSTNAME`/`ARCHIVO`) plus a crop step, which isn't written yet and is blocked on the file-access gap above.
 - Transcription (`transcribe_audio_segments`, reused from Tool 1) and brand-mention extraction (`extract_brand_mentions` in `src/extraction.py`, new) are built and work standalone on any local wav file — just not yet wired to the DB-sourced segments.
 - **Output table designed, not yet created**: `scripts/create_mentions_table.py` has the DDL for `MENCIONES_COMERCIALES` (idempotent, safe to re-run) and `src/tool2.py` has `save_mentions()` to insert into it. **Blocked**: the DB login currently in use only has `SELECT` — `CREATE TABLE permission denied in database 'OrbitMedia_Test'` when tried live. Needs either write access granted on this login, or the client running `create_mentions_table.py` (or the DDL inside it) themselves.
