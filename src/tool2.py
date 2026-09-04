@@ -9,8 +9,12 @@ from src.audio import transcribe_timestamped_segments
 from src.db.db import engine
 from src.extraction import extract_brand_mentions
 
+# TESTIGO_SARA.ARCHIVO already embeds its own subfolder (e.g. "MP3\XHRED-...MP3"),
+# so this points at the share root -- \\sara3\sara -- not the mp3 subfolder itself.
+# Confirmed 2026-09-03: every ARCHIVO sampled from SARA3 starts with "MP3\", and the
+# live \\sara3\sara\mp3 share lists those exact files flat, one level in.
 TESTIGO_SHARE_TEMPLATE = os.environ.get(
-    "TESTIGO_SHARE_TEMPLATE", r"\\{hostname}\sara\mp3"
+    "TESTIGO_SHARE_TEMPLATE", r"\\{hostname}\sara"
 )
 ESTATUS_DESCARTADO_LOCUTOR: int = 10
 ESTATUS_DESCARTADO_NOTICIERO: int = 11

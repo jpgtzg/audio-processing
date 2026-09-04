@@ -2,9 +2,10 @@
 
 Checks two things independently, since either one can be broken without the
 other: (1) the OrbitMedia_Test DB is reachable with the credentials in .env,
-and (2) the SARA3 network share (\\sara3\\sara\\mp3) is reachable and has
-files in it. Meant to be run as smoke_test.exe on SaraAlt before relying on
-Tool 2's real pipeline -- see docs/handoff.md "File access" section.
+and (2) the SARA3 network share (\\sara3\\sara, and its MP3 subfolder where
+ARCHIVO values actually point) is reachable and has files in it. Meant to be
+run as smoke_test.exe on SaraAlt before relying on Tool 2's real pipeline --
+see docs/handoff.md "File access" section.
 
 Usage: smoke_test.exe [hostname]   (hostname defaults to sara3)
 """
@@ -33,22 +34,37 @@ def test_db() -> tuple[bool, str]:
 
 
 def test_share(hostname: str) -> tuple[bool, str]:
+    """Checks both the share root (what resolve_testigo_path() actually joins
+    ARCHIVO onto) and its MP3 subfolder (where TESTIGO_SARA.ARCHIVO values
+    for SARA3 have been observed to point, e.g. "MP3\\XHRED-...MP3") -- the
+    subfolder check is what actually matters for real segment resolution."""
     import os
 
-    share_dir = TESTIGO_SHARE_TEMPLATE.format(hostname=hostname.lower())
-    try:
-        if not os.path.isdir(share_dir):
-            return False, f"FAILED -- {share_dir} is not reachable/does not exist"
+    share_root = TESTIGO_SHARE_TEMPLATE.format(hostname=hostname.lower())
+    mp3_dir = os.path.join(share_root, "MP3")
 
-        entries = os.listdir(share_dir)
-        sample = entries[:5]
-        return (
-            True,
-            f"reachable OK -- {share_dir} has {len(entries)} entries, "
-            f"sample: {sample}",
-        )
+    if not os.path.isdir(share_root):
+        return False, f"FAILED -- {share_root} is not reachable/does not exist"
+
+    try:
+        root_entries = os.listdir(share_root)
     except Exception as e:
-        return False, f"FAILED -- {share_dir} -- {e}"
+        return False, f"FAILED -- {share_root} -- {e}"
+
+    if not os.path.isdir(mp3_dir):
+        return (
+            False,
+            f"share root {share_root} reachable ({len(root_entries)} entries), "
+            f"but {mp3_dir} is not -- resolve_testigo_path() expects ARCHIVO's "
+            f"own subfolder to live here",
+        )
+
+    mp3_entries = os.listdir(mp3_dir)
+    return (
+        True,
+        f"reachable OK -- {mp3_dir} has {len(mp3_entries)} entries, "
+        f"sample: {mp3_entries[:5]}",
+    )
 
 
 def main() -> None:
