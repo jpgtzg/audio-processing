@@ -20,3 +20,7 @@ output/
 
 # Meeting recording -- large binary, not worth tracking in git
 docs/junta/
+
+# Local scratch space for downloaded/built executables
+share/
+*.exe

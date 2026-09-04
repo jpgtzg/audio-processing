@@ -24,18 +24,21 @@ jobs:
         run: >
           uv run pyinstaller --onefile --console --name tool1
           --add-data "src/db/freetds.conf;src/db"
+          --collect-all pymssql
           run_tool1.py
 
       - name: Build tool2.exe
         run: >
           uv run pyinstaller --onefile --console --name tool2
           --add-data "src/db/freetds.conf;src/db"
+          --collect-all pymssql
           run_tool2.py
 
       - name: Build smoke_test.exe
         run: >
           uv run pyinstaller --onefile --console --name smoke_test
           --add-data "src/db/freetds.conf;src/db"
+          --collect-all pymssql
           run_smoke_test.py
 
       - name: Upload tool1.exe
