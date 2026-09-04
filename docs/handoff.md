@@ -60,6 +60,8 @@ Quick summary — SQL Server `OrbitMedia_Test` (SQL Server 2008). `pymssql` (bui
 
 Files live at `C:\Sara\AltasFp\wav` **locally on whichever `SARA<n>` capture host produced them** — not centralized. Direct `C:\` disk access from the client hasn't landed yet.
 
+**Resolved for Tool 2 (2026-09-03)**: both tools will run on the **SaraAlt** machine, which has network access to every `SARA<n>` capture host's shared folder — confirmed reachable in SaraAlt's Network browser. Per the client, instead of a local path, connect over the network to the corresponding host, e.g. `\\sara3\sara\mp3\<ARCHIVO>` to reach SARA3 (Monterrey). `TESTIGO_SARA.HOSTNAME` gives which `SARA<n>` each testigo belongs to. Wired into `src/tool2.py`'s `resolve_testigo_path()` / `TESTIGO_SHARE_TEMPLATE` — this resolves Tool 2's "real file access" blocker below. The client mentioned SARA3 as a known-good host to test against for now. Tool 1's equivalent (`C:\Sara\AltasFp\wav` access) hasn't been addressed the same way yet — worth confirming whether it's the same SaraAlt UNC pattern (`\\sara<n>\sara\AltasFp\wav`?) or something else.
+
 **Current stand-in**: the client separately shared `client_data/wav2/` — **4,359 already-cropped candidate `.wav` files**, matching the production shape Tool 1 will actually receive (this supersedes the earlier full-day/hour-by-hour audio workaround mentioned in prior versions of this doc). Tool 1's pipeline (`src/tool1.py`) reads directly from this folder.
 
 ### Matching local wavs to DB rows

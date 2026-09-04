@@ -32,6 +32,12 @@ jobs:
           --add-data "src/db/freetds.conf;src/db"
           run_tool2.py
 
+      - name: Build smoke_test.exe
+        run: >
+          uv run pyinstaller --onefile --console --name smoke_test
+          --add-data "src/db/freetds.conf;src/db"
+          run_smoke_test.py
+
       - name: Upload tool1.exe
         uses: actions/upload-artifact@v4
         with:
@@ -43,3 +49,9 @@ jobs:
         with:
           name: tool2-windows
           path: dist/tool2.exe
+
+      - name: Upload smoke_test.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-windows
+          path: dist/smoke_test.exe

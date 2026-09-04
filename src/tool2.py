@@ -1,23 +1,20 @@
 import os
-import re
+import sys
+import tempfile
 
+from pydub import AudioSegment
 from sqlalchemy import bindparam, text
 
 from src.audio import transcribe_timestamped_segments
 from src.db.db import engine
 from src.extraction import extract_brand_mentions
 
-INPUT_DIR = "tool2_input"
-
-FIELDS = ["filename", "marca", "anunciante", "start", "end", "transcript"]
-
-# SEGMENTO_SARA.ID_ESTATUS_SEGMENTO links to CAT_ESTATUS_SEGMENTO (confirmed live
-# against the client's test DB). Client confirmed (2026-08-17) Tool 2 should cover
-# these three discard reasons:
-ESTATUS_DESCARTADO_LOCUTOR: int = 10  # "Descartado por Locutor"
-ESTATUS_DESCARTADO_NOTICIERO: int = 11  # "Descartado por Noticiero"
-ESTATUS_DESCARTADO_CANCION: int = 12  # "Descartado por Cancion"
-
+TESTIGO_SHARE_TEMPLATE = os.environ.get(
+    "TESTIGO_SHARE_TEMPLATE", r"\\{hostname}\sara\mp3"
+)
+ESTATUS_DESCARTADO_LOCUTOR: int = 10
+ESTATUS_DESCARTADO_NOTICIERO: int = 11
+ESTATUS_DESCARTADO_CANCION: int = 12
 TOOL2_ESTATUS_IDS: list[int] = [
     ESTATUS_DESCARTADO_LOCUTOR,
     ESTATUS_DESCARTADO_NOTICIERO,
@@ -30,19 +27,19 @@ def fetch_discarded_segments(
     id_testigo_min: int | None = None,
 ) -> list[dict]:
     """SEGMENTO_SARA rows discarded for one of the given ID_ESTATUS_SEGMENTO
-    reasons. Note this only gives segment-level offsets (INICIO/DURACION) into
-    the parent TESTIGO_SARA recording -- resolving an actual wav clip still needs
-    a join against TESTIGO_SARA (HOSTNAME/ARCHIVO) plus a crop step, same as
-    Tool 1's file-access story, which isn't wired up here yet.
+    reasons, joined against TESTIGO_SARA for HOSTNAME/ARCHIVO so each row is
+    enough to locate and crop the actual clip (see resolve_testigo_path()).
 
     SEGMENTO_SARA is 100M+ rows (12M+ for song-discard alone) -- always pass
     id_testigo_min (or add another bound) rather than pulling the whole table."""
     query = text(
         """
-        SELECT ID_SEGMENTO, ID_TESTIGO, ID_ESTATUS_SEGMENTO, INICIO, DURACION
-        FROM SEGMENTO_SARA
-        WHERE ID_ESTATUS_SEGMENTO IN :estatus_ids
-          AND (:id_testigo_min IS NULL OR ID_TESTIGO >= :id_testigo_min)
+        SELECT s.ID_SEGMENTO, s.ID_TESTIGO, s.ID_ESTATUS_SEGMENTO, s.INICIO, s.DURACION,
+               t.HOSTNAME, t.ARCHIVO
+        FROM SEGMENTO_SARA s
+        JOIN TESTIGO_SARA t ON s.ID_TESTIGO = t.ID_TESTIGO
+        WHERE s.ID_ESTATUS_SEGMENTO IN :estatus_ids
+          AND (:id_testigo_min IS NULL OR s.ID_TESTIGO >= :id_testigo_min)
         """
     ).bindparams(bindparam("estatus_ids", expanding=True))
 
@@ -58,36 +55,52 @@ def fetch_discarded_segments(
     return [dict(row) for row in rows]
 
 
-def natural_sort_key(filename: str) -> list:
-    return [
-        int(chunk) if chunk.isdigit() else chunk.lower()
-        for chunk in re.split(r"(\d+)", filename)
-    ]
+def resolve_testigo_path(hostname: str, archivo: str) -> str:
+    """Builds the UNC path to a TESTIGO_SARA recording from its capture host and
+    filename, e.g. \\sara3\\sara\\mp3\\<ARCHIVO>. See TESTIGO_SHARE_TEMPLATE above."""
+    share_dir = TESTIGO_SHARE_TEMPLATE.format(hostname=hostname.lower())
+    return os.path.join(share_dir, archivo)
 
 
-def process(filename: str, segment: dict | None = None) -> list[dict]:
-    """Transcribes a single discarded/oversized segment and returns one row per
-    detected brand mention (a clip can contain zero, one, or several).
+def crop_segment(testigo_path: str, inicio: float, duracion: float) -> str:
+    """Crops [inicio, inicio + duracion] out of a testigo recording and exports it
+    to a temp wav file for transcription. Assumes INICIO/DURACION are both in
+    seconds (SEGMENTO_SARA's own offset convention into its parent testigo --
+    distinct from ALTAS_SARA_FP.INICIO, which is confirmed to be milliseconds).
+    Not yet literally confirmed with the client; worth a quick sanity check by ear
+    before this goes live, the same way ALTAS_SARA_FP's units were."""
+    audio = AudioSegment.from_file(testigo_path)
+    start_ms = int(inicio * 1000)
+    end_ms = start_ms + int(duracion * 1000)
 
-    `segment` is the source SEGMENTO_SARA row (one item from
-    fetch_discarded_segments()) so each mention can be traced back to where it
-    came from and saved via save_mentions(). Left optional for local ad-hoc
-    testing against a wav that has no known DB row -- those mentions come back
-    without id_segmento/id_testigo/id_estatus_segmento and save_mentions() will
-    reject them."""
-    path = os.path.join(INPUT_DIR, filename)
-    segments = transcribe_timestamped_segments(path)
+    tmp_path = tempfile.mktemp(suffix=".wav")
+    audio[start_ms:end_ms].export(tmp_path, format="wav")
+    return tmp_path
+
+
+def process(segment: dict) -> list[dict]:
+    """Transcribes a single discarded/oversized segment (one row from
+    fetch_discarded_segments()) and returns one row per detected brand mention
+    (a clip can contain zero, one, or several), each carrying the source
+    id_segmento/id_testigo/id_estatus_segmento so it can be traced back and
+    saved via save_mentions()."""
+    testigo_path = resolve_testigo_path(segment["HOSTNAME"], segment["ARCHIVO"])
+    clip_path = crop_segment(testigo_path, segment["INICIO"], segment["DURACION"])
+
+    try:
+        segments = transcribe_timestamped_segments(clip_path)
+    finally:
+        os.remove(clip_path)
+
     transcript = " ".join(s["text"] for s in segments)
-
     mentions = extract_brand_mentions(segments)
 
     return [
         {
-            "filename": filename,
             "transcript": transcript,
-            "id_segmento": segment["ID_SEGMENTO"] if segment else None,
-            "id_testigo": segment["ID_TESTIGO"] if segment else None,
-            "id_estatus_segmento": segment["ID_ESTATUS_SEGMENTO"] if segment else None,
+            "id_segmento": segment["ID_SEGMENTO"],
+            "id_testigo": segment["ID_TESTIGO"],
+            "id_estatus_segmento": segment["ID_ESTATUS_SEGMENTO"],
             **mention,
         }
         for mention in mentions
@@ -143,32 +156,37 @@ def save_mentions(mentions: list[dict]) -> None:
         conn.commit()
 
 
-def main():
-    # Local-file testing loop only: there's no mapping yet from a local wav
-    # filename to a real SEGMENTO_SARA row (see docs/handoff.md), so this can't
-    # call save_mentions(). Once file access resolves that link, drive
-    # save_mentions() from fetch_discarded_segments() + process(file, segment)
-    # instead of this loop.
-    files = sorted(
-        (f for f in os.listdir(INPUT_DIR) if f.endswith((".wav", ".mp3", ".mp4"))),
-        key=natural_sort_key,
-    )
+def main(id_testigo_min: int) -> None:
+    segments = fetch_discarded_segments(id_testigo_min=id_testigo_min)
+    total = len(segments)
 
-    total = len(files)
-
-    for done, file in enumerate(files, start=1):
+    for done, segment in enumerate(segments, start=1):
+        label = f"ID_SEGMENTO={segment['ID_SEGMENTO']}"
         print("=" * 40)
-        print("Processing file:", file)
-        results = process(file)
-        if not results:
-            print(f"[{done}/{total}] {file}: no brand mentions found")
+        print("Processing segment:", label)
+
+        try:
+            results = process(segment)
+        except FileNotFoundError:
+            print(f"[{done}/{total}] {label}: recording not reachable, skipping")
             continue
+
+        if not results:
+            print(f"[{done}/{total}] {label}: no brand mentions found")
+            continue
+
+        save_mentions(results)
         for result in results:
             print(
-                f"[{done}/{total}] {file}: {result['anunciante']} / {result['marca']} "
+                f"[{done}/{total}] {label}: {result['anunciante']} / {result['marca']} "
                 f"({result['start']:.2f}s-{result['end']:.2f}s)"
             )
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) != 2:
+        raise SystemExit(
+            "usage: python -m src.tool2 <id_testigo_min>\n"
+            "SEGMENTO_SARA is 100M+ rows -- a lower bound on ID_TESTIGO is required."
+        )
+    main(id_testigo_min=int(sys.argv[1]))
