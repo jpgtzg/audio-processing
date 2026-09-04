@@ -15,3 +15,8 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "sqlalchemy>=2.0.51",
 ]
+
+[dependency-groups]
+build = [
+    "pyinstaller>=6.11.0",
+]

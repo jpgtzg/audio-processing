@@ -1,0 +1,45 @@
+name: Build Windows executables
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --group build
+
+      - name: Build tool1.exe
+        run: >
+          uv run pyinstaller --onefile --console --name tool1
+          --add-data "src/db/freetds.conf;src/db"
+          run_tool1.py
+
+      - name: Build tool2.exe
+        run: >
+          uv run pyinstaller --onefile --console --name tool2
+          --add-data "src/db/freetds.conf;src/db"
+          run_tool2.py
+
+      - name: Upload tool1.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: tool1-windows
+          path: dist/tool1.exe
+
+      - name: Upload tool2.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: tool2-windows
+          path: dist/tool2.exe
