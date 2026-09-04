@@ -4,6 +4,13 @@ against real station audio without transcribing an entire hour (expensive --
 Tool 2 re-transcribes in overlapping windows, so a full hour is hundreds of
 Whisper calls).
 
+Client confirmed (2026-09-04) that TESTIGO_SARA-style captures multiplex two
+unrelated station emissions onto stereo left/right (see TESTIGO_SARA.CANAL,
+wired into src/tool2.py's crop_segment()). This file has no DB row/CANAL to
+key off of, so if SOURCE turns out to be a dual-emission capture too, this
+slice will still blend both channels -- pick one manually with
+AudioSegment.split_to_mono()[0 or 1] before relying on this for anything real.
+
 Usage: uv run python3 -m scripts.slice_sample [start_minutes] [duration_minutes]
 """
 

@@ -9,13 +9,7 @@ from src.audio import transcribe_timestamped_segments
 from src.db.db import engine
 from src.extraction import extract_brand_mentions
 
-# TESTIGO_SARA.ARCHIVO already embeds its own subfolder (e.g. "MP3\XHRED-...MP3"),
-# so this points at the share root -- \\sara3\sara -- not the mp3 subfolder itself.
-# Confirmed 2026-09-03: every ARCHIVO sampled from SARA3 starts with "MP3\", and the
-# live \\sara3\sara\mp3 share lists those exact files flat, one level in.
-TESTIGO_SHARE_TEMPLATE = os.environ.get(
-    "TESTIGO_SHARE_TEMPLATE", r"\\{hostname}\sara"
-)
+TESTIGO_SHARE_TEMPLATE = os.environ.get("TESTIGO_SHARE_TEMPLATE", r"\\{hostname}\sara")
 ESTATUS_DESCARTADO_LOCUTOR: int = 10
 ESTATUS_DESCARTADO_NOTICIERO: int = 11
 ESTATUS_DESCARTADO_CANCION: int = 12
@@ -39,7 +33,7 @@ def fetch_discarded_segments(
     query = text(
         """
         SELECT s.ID_SEGMENTO, s.ID_TESTIGO, s.ID_ESTATUS_SEGMENTO, s.INICIO, s.DURACION,
-               t.HOSTNAME, t.ARCHIVO
+               t.HOSTNAME, t.ARCHIVO, t.CANAL
         FROM SEGMENTO_SARA s
         JOIN TESTIGO_SARA t ON s.ID_TESTIGO = t.ID_TESTIGO
         WHERE s.ID_ESTATUS_SEGMENTO IN :estatus_ids
@@ -66,14 +60,26 @@ def resolve_testigo_path(hostname: str, archivo: str) -> str:
     return os.path.join(share_dir, archivo)
 
 
-def crop_segment(testigo_path: str, inicio: float, duracion: float) -> str:
+def crop_segment(testigo_path: str, inicio: float, duracion: float, canal: int) -> str:
     """Crops [inicio, inicio + duracion] out of a testigo recording and exports it
     to a temp wav file for transcription. Assumes INICIO/DURACION are both in
     seconds (SEGMENTO_SARA's own offset convention into its parent testigo --
     distinct from ALTAS_SARA_FP.INICIO, which is confirmed to be milliseconds).
     Not yet literally confirmed with the client; worth a quick sanity check by ear
-    before this goes live, the same way ALTAS_SARA_FP's units were."""
+    before this goes live, the same way ALTAS_SARA_FP's units were.
+
+    Client confirmed (2026-09-04): each file under mp3/ actually carries two
+    simultaneous, unrelated station emissions multiplexed onto stereo left/right --
+    TESTIGO_SARA.CANAL says which one this row is (1=left, 2=right). Isolating the
+    right channel here (rather than mixing both down to mono) is required, not
+    optional -- feeding Whisper both channels blended together is a likely cause
+    of the garbled/looping transcripts seen before this fix."""
     audio = AudioSegment.from_file(testigo_path)
+    if audio.channels >= 2:
+        if canal not in (1, 2):
+            raise ValueError(f"CANAL must be 1 or 2 to pick a channel, got {canal!r}")
+        audio = audio.split_to_mono()[canal - 1]
+
     start_ms = int(inicio * 1000)
     end_ms = start_ms + int(duracion * 1000)
 
@@ -89,7 +95,9 @@ def process(segment: dict) -> list[dict]:
     id_segmento/id_testigo/id_estatus_segmento so it can be traced back and
     saved via save_mentions()."""
     testigo_path = resolve_testigo_path(segment["HOSTNAME"], segment["ARCHIVO"])
-    clip_path = crop_segment(testigo_path, segment["INICIO"], segment["DURACION"])
+    clip_path = crop_segment(
+        testigo_path, segment["INICIO"], segment["DURACION"], segment["CANAL"]
+    )
 
     try:
         segments = transcribe_timestamped_segments(clip_path)

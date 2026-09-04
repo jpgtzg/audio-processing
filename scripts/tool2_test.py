@@ -53,7 +53,7 @@ def fetch_segments_for_host(
         f"""
         WITH ranked AS (
             SELECT s.ID_SEGMENTO, s.ID_TESTIGO, s.ID_ESTATUS_SEGMENTO, s.INICIO, s.DURACION,
-                   t.HOSTNAME, t.ARCHIVO,
+                   t.HOSTNAME, t.ARCHIVO, t.CANAL,
                    ROW_NUMBER() OVER (PARTITION BY s.ID_TESTIGO ORDER BY s.INICIO) AS rn
             FROM SEGMENTO_SARA s
             JOIN TESTIGO_SARA t ON s.ID_TESTIGO = t.ID_TESTIGO
@@ -62,7 +62,7 @@ def fetch_segments_for_host(
               AND (:id_testigo_min IS NULL OR s.ID_TESTIGO >= :id_testigo_min)
         )
         SELECT TOP {int(limit)}
-               ID_SEGMENTO, ID_TESTIGO, ID_ESTATUS_SEGMENTO, INICIO, DURACION, HOSTNAME, ARCHIVO
+               ID_SEGMENTO, ID_TESTIGO, ID_ESTATUS_SEGMENTO, INICIO, DURACION, HOSTNAME, ARCHIVO, CANAL
         FROM ranked
         WHERE rn = 1
         ORDER BY ID_TESTIGO DESC
@@ -90,7 +90,9 @@ def process_segment(segment: dict) -> dict:
     the mentions (instead of just mentions) so the .txt output can show both,
     and never touches the DB beyond the initial read."""
     testigo_path = resolve_testigo_path(segment["HOSTNAME"], segment["ARCHIVO"])
-    clip_path = crop_segment(testigo_path, segment["INICIO"], segment["DURACION"])
+    clip_path = crop_segment(
+        testigo_path, segment["INICIO"], segment["DURACION"], segment["CANAL"]
+    )
 
     try:
         segments = transcribe_timestamped_segments(clip_path)

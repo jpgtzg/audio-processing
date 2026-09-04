@@ -127,6 +127,11 @@ Find every distinct brand/advertiser mention. For each one, report:
 Do not invent mentions. If the transcript is just music, silence, or unrelated chatter with no brand
 mentioned, return an empty list. A brief passing mention still counts.
 
+**Do not report the radio/TV station itself** — its own name, call sign, frequency (e.g. "88.9 FM"),
+slogans, social media handles, or presenter/show names are self-promotion, not a commercial brand or
+advertiser, even if repeated constantly. Only report brands that are distinct from the station running
+the broadcast, i.e. something a real advertiser is paying to promote.
+
 Write all output text in Spanish (brand/product names should stay as mentioned in the transcript).
 
 Respond with JSON only, matching this shape:

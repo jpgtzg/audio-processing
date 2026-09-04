@@ -72,6 +72,16 @@ Not every file in `client_data/wav2` has a corresponding DB row (some may be fro
 - **Result: 2,450 of 4,359 local files (~56%) have a matching DB row.**
 - Matched files + their DB metadata (`INICIO`, `DURACION`, `OFFSET_INI`, `OFFSET_FIN`, `ID_ALTAS_SARA_FP`, `ID_ESTATUS_ALTA`) get copied into `client_data/real_audio_db/` with a `manifest.csv` — this is the closest thing to a ground-truth set for validating transcription/extraction accuracy against known DB data.
 
+## Stereo dual-emission capture — client confirmed 2026-09-04
+
+Client: "para saber cual es cual en testigo_sara viene un campo que se llama canal viene como 1 o 2 el 1 es el izq y 2 el der." Each file under a `SARA<n>` host's `mp3/` share is not a single station's recording — it's a **stereo capture multiplexing two unrelated station emissions**, one per channel: left (`CANAL=1`) and right (`CANAL=2`). `TESTIGO_SARA.CANAL` says which emission a given row actually is.
+
+Before this was known, `src/tool2.py`'s `crop_segment()` loaded the whole stereo file as-is (and `audio.py`'s `_iter_audio_chunks` large-file branch explicitly did `.set_channels(1)`, downmixing both channels together) — meaning Whisper was being fed **two overlapping, unrelated broadcasts blended into one signal**. This is a very plausible root cause of the garbled/looping transcripts seen when dry-running Tool 2 against fresh data on SaraAlt (2026-09-04): what looked like a Whisper hallucination bug may actually have been Whisper accurately transcribing two stations talking over each other.
+
+**Fixed in `src/tool2.py` (2026-09-04)**: `fetch_discarded_segments()` now also selects `t.CANAL`; `crop_segment()` takes a required `canal` argument and isolates that channel via `pydub`'s `split_to_mono()` before cropping, so only one station's audio ever reaches Whisper. Mirrored in `scripts/tool2_test.py`. Not yet re-validated live against the segment that showed the looping behavior — worth re-running `tool2_test.exe` against the same `ID_SEGMENTO=154650126` to confirm the fix actually cleans up that transcript.
+
+**Open question — does this affect Tool 1 too?** `client_data/wav2` (Tool 1's already-cropped ad clips) come pre-extracted by SARA's own pipeline, not read directly from a raw testigo file by our code — so it's unconfirmed whether SARA already isolates the correct channel before producing those clips, or whether they could carry the same dual-emission problem. Worth asking the client directly before Tool 1's DB-driven file loop is built.
+
 ## Whisper truncation bug — the main technical problem this session, now fixed
 
 **Symptom**: `whisper-1` sometimes silently stops transcribing partway through a clip — not due to real silence (checked via dBFS), but an internal decoder heuristic ("am I done?") firing prematurely, often around a topic shift, station-ID tag, or music bed. There's no API-exposed parameter to tune this directly on the hosted `whisper-1` endpoint (confirmed via external research, see `docs/transcript_research.md`). Alternative model `gpt-4o-transcribe` was evaluated and rejected — different failure mode (drops other content, non-deterministic, no seed control).
