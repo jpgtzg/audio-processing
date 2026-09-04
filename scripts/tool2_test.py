@@ -26,7 +26,12 @@ from sqlalchemy import bindparam, text
 from src.audio import transcribe_timestamped_segments
 from src.db.db import engine
 from src.extraction import extract_brand_mentions
-from src.tool2 import TOOL2_ESTATUS_IDS, crop_segment, resolve_testigo_path
+from src.tool2 import (
+    TESTIGO_SHARE_TEMPLATE,
+    TOOL2_ESTATUS_IDS,
+    crop_segment,
+    resolve_testigo_path,
+)
 
 DEFAULT_HOSTNAME = "sara3"
 DEFAULT_ID_TESTIGO_MIN = 21_000_000
@@ -40,18 +45,27 @@ def fetch_segments_for_host(
     estatus_ids: list[int] = TOOL2_ESTATUS_IDS,
 ) -> list[dict]:
     """Same query as src/tool2.py's fetch_discarded_segments(), narrowed to one
-    host and capped at `limit` rows so this stays a quick, cheap dry run."""
+    host and capped at `limit` distinct *testigos* (one segment each) rather
+    than `limit` segments -- SEGMENTO_SARA has many segments per testigo, so
+    capping on segments alone tends to sample the same handful of source
+    files repeatedly instead of a diverse set worth checking file-by-file."""
     query = text(
         f"""
+        WITH ranked AS (
+            SELECT s.ID_SEGMENTO, s.ID_TESTIGO, s.ID_ESTATUS_SEGMENTO, s.INICIO, s.DURACION,
+                   t.HOSTNAME, t.ARCHIVO,
+                   ROW_NUMBER() OVER (PARTITION BY s.ID_TESTIGO ORDER BY s.INICIO) AS rn
+            FROM SEGMENTO_SARA s
+            JOIN TESTIGO_SARA t ON s.ID_TESTIGO = t.ID_TESTIGO
+            WHERE s.ID_ESTATUS_SEGMENTO IN :estatus_ids
+              AND UPPER(t.HOSTNAME) = UPPER(:hostname)
+              AND (:id_testigo_min IS NULL OR s.ID_TESTIGO >= :id_testigo_min)
+        )
         SELECT TOP {int(limit)}
-               s.ID_SEGMENTO, s.ID_TESTIGO, s.ID_ESTATUS_SEGMENTO, s.INICIO, s.DURACION,
-               t.HOSTNAME, t.ARCHIVO
-        FROM SEGMENTO_SARA s
-        JOIN TESTIGO_SARA t ON s.ID_TESTIGO = t.ID_TESTIGO
-        WHERE s.ID_ESTATUS_SEGMENTO IN :estatus_ids
-          AND UPPER(t.HOSTNAME) = UPPER(:hostname)
-          AND (:id_testigo_min IS NULL OR s.ID_TESTIGO >= :id_testigo_min)
-        ORDER BY s.ID_TESTIGO DESC
+               ID_SEGMENTO, ID_TESTIGO, ID_ESTATUS_SEGMENTO, INICIO, DURACION, HOSTNAME, ARCHIVO
+        FROM ranked
+        WHERE rn = 1
+        ORDER BY ID_TESTIGO DESC
         """
     ).bindparams(bindparam("estatus_ids", expanding=True))
 
@@ -86,6 +100,30 @@ def process_segment(segment: dict) -> dict:
     transcript = " ".join(s["text"] for s in segments)
     mentions = extract_brand_mentions(segments)
     return {"transcript": transcript, "mentions": mentions}
+
+
+def diagnose_missing_file(segment: dict) -> str:
+    r"""When resolve_testigo_path()'s path 404s, checks two alternate
+    constructions to tell a path-resolution bug apart from a file that's
+    genuinely gone from the live share (e.g. rotated/deleted since the
+    OrbitMedia_Test snapshot was taken): (a) the pre-2026-09-03 layout that
+    appended ARCHIVO onto \\<host>\sara\mp3 (double "mp3"), and (b) whether
+    the share root itself is even listable."""
+    hostname, archivo = segment["HOSTNAME"], segment["ARCHIVO"]
+    share_root = TESTIGO_SHARE_TEMPLATE.format(hostname=hostname.lower())
+    old_style_path = os.path.join(share_root, "mp3", archivo)
+
+    if not os.path.isdir(share_root):
+        return f"share root {share_root} itself is not reachable"
+
+    if os.path.isfile(old_style_path):
+        return f"FOUND at old-style path {old_style_path} -- path fix regressed this, needs revisiting"
+
+    return (
+        f"not found under either the current path or {old_style_path} -- "
+        f"likely genuinely missing from the live share (stale DB snapshot), "
+        f"not a path bug"
+    )
 
 
 def main() -> None:
@@ -124,8 +162,11 @@ def main() -> None:
         try:
             result = process_segment(segment)
         except FileNotFoundError as e:
+            diag = diagnose_missing_file(segment)
             print(f"  SKIPPED -- recording not reachable: {e}")
+            print(f"  DIAGNOSTIC: {diag}")
             lines.append(f"  SKIPPED -- recording not reachable: {e}")
+            lines.append(f"  DIAGNOSTIC: {diag}")
             continue
         except Exception as e:
             print(f"  ERROR -- {e}")
