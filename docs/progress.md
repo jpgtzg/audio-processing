@@ -55,8 +55,8 @@ Was deferred at project start ("revisit after Tool 1 ships"); work began 2026-08
 - **"Oversized" segment detection** — not a status code, would be a `DURACION` threshold; no value confirmed by the client yet.
 - **Segment-offset units** — `crop_segment()` assumes `SEGMENTO_SARA.INICIO`/`DURACION` are seconds (distinct from `ALTAS_SARA_FP`'s millisecond convention); not yet confirmed by ear the way Tool 1's units were.
 
-### Blocked
-- **DB write access** — same read-only login issue as Tool 1. `CREATE TABLE MENCIONES_COMERCIALES` was denied live. Table doesn't exist yet because of this.
+### DB write access — resolved (2026-09-03)
+Client confirmed write access is now granted. Verified directly (not just re-tried the old blocked path): `MENCIONES_COMERCIALES` already exists live in `OrbitMedia_Test` with exactly the designed schema (`scripts/create_mentions_table.py` reported "already exists, skipping" — someone, likely the client, created it since the client granted access). Ran `save_mentions()` with a throwaway test row (`ID_SEGMENTO=-1`) — insert succeeded with all fields (`TITULO`/`ANUNCIANTE`/`MARCA`/mention timestamps/transcript/default `ID_ESTATUS_VALIDACION=1`) landing correctly, then deleted it. **The full pipeline including the DB write-back is now confirmed working**, not just designed — the only remaining gap for showing it truly end-to-end is a fresh `OrbitMedia_Test` snapshot (see "Blocked (new)" above) so a *real* segment can be fetched, cropped from the live share, and its detected mentions saved, all in one run.
 
 ## Cross-cutting blockers (both tools)
 
