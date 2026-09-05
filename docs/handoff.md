@@ -88,6 +88,15 @@ Dry-running `tool2_test.exe` against fresh `sara3` data repeatedly hit `FileNotF
 
 **Fixed (2026-09-05)**: `fetch_discarded_segments()` (and `scripts/tool2_test.py`'s equivalent query) now also requires `TESTIGO_SARA.ID_ESTATUS_TESTIGO IN (3, 5)` — "Procesado con Blank" (3) and "Reproceso" (5), the two statuses the client identified as testigos SARA itself considers finished, and therefore actually still on disk. New constants: `TESTIGO_ESTATUS_PROCESADO_CON_BLANK`, `TESTIGO_ESTATUS_REPROCESO`, `TOOL2_TESTIGO_ESTATUS_IDS` in `src/tool2.py`.
 
+## First real MENCIONES_COMERCIALES rows were all false positives — extraction prompt hardened (2026-09-05)
+
+Once `save_mentions()` started actually writing (table recreated after the snapshot refresh wiped it — see "DB write access" above), the first 9 rows written were reviewed directly in the DB and every single one turned out to be a false positive, in two categories:
+
+1. **Whisper hallucination artifacts on music/low-confidence audio** — `www.alimmenta.com` ("Más información www.alimmenta.com") is a well-documented stock Whisper hallucination, same category as "Subtítulos realizados por la comunidad de Amara.org"; nonsense brand-like fragments ("La Bonita Tea Coleman", "Zumba") came from otherwise-garbled song transcripts. None of this was actually said in the clip.
+2. **Station self-promotion not caught by the existing exclusion** — a station's own app ("Grupo Az"/"Grupo Azz"), its own ad-sales product pitched to potential advertisers ("InstaSpot"), and its own frequency/brand ("la poderosa noventa y seis punto nueve") all slipped through because the prompt only excluded name/call sign/frequency/slogan/presenter, not "the station's own product or service being pitched to its audience or to advertisers."
+
+**Fixed in `BRAND_MENTION_SYSTEM_PROMPT` (`src/extraction.py`, 2026-09-05)**: added an explicit instruction to ignore known Whisper hallucination stock phrases regardless of context, plus a rule that first-person possessive language ("nuestra aplicación", "nuestro InstaSpot", "anúnciate con nosotros") is conclusive proof of self-promotion even when the product has its own distinct brand name. Verified directly against the actual transcripts that produced all 9 bad rows — all now correctly return zero mentions. The 9 bad rows were deleted from `MENCIONES_COMERCIALES` after the fix was confirmed.
+
 ## Whisper truncation bug — the main technical problem this session, now fixed
 
 **Symptom**: `whisper-1` sometimes silently stops transcribing partway through a clip — not due to real silence (checked via dBFS), but an internal decoder heuristic ("am I done?") firing prematurely, often around a topic shift, station-ID tag, or music bed. There's no API-exposed parameter to tune this directly on the hosted `whisper-1` endpoint (confirmed via external research, see `docs/transcript_research.md`). Alternative model `gpt-4o-transcribe` was evaluated and rejected — different failure mode (drops other content, non-deterministic, no seed control).

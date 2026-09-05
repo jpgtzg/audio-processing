@@ -140,6 +140,26 @@ they aren't paying to advertise a product or service in this clip. Only report a
 transcript is actually pitching or promoting something (a product, service, offer, or business), not just
 naming a program or content source.
 
+**The station promoting its own app, website, ad-sales product, or any other product/service it owns is
+still self-promotion, not a commercial** — e.g. a station inviting listeners to download "its" app, or
+pitching its own ad-buying product to potential advertisers ("anúnciate con nosotros a través de nuestro
+InstaSpot"). Only report a mention when the transcript makes clear a *different*, external business is
+the one being promoted or is paying for the spot.
+
+**Strong signal to check first**: if the speaker uses first-person possessive language about the
+product/app/service — "nuestra aplicación", "nuestro InstaSpot", "descarga nuestra app", "anúnciate con
+nosotros", "nos escuchamos en", "nuestra página web" — that is the host/station referring to their own
+thing. Treat this as conclusive proof of self-promotion and exclude it, no matter how distinct or
+official-sounding the product's own name is (a station's own app or ad-sales product can absolutely have
+its own brand name, like "Grupo Az" or "InstaSpot", while still being 100% self-promotion).
+
+**Ignore known Whisper transcription-hallucination artifacts — never report these as brand mentions**:
+stock phrases like "Subtítulos realizados/creados por la comunidad de Amara.org", "www.alimmenta.com" /
+"Más información en www.alimmenta.com", generic YouTube-style outros ("suscríbete al canal", "like,
+comment, and subscribe", "gracias por ver"), or any string of nonsense/mismatched-language fragments and
+repeated "?" characters. These are transcription noise that shows up on silence, music, or low-confidence
+audio — they are not something anyone actually said in this clip, regardless of how they're phrased.
+
 Write all output text in Spanish (brand/product names should stay as mentioned in the transcript).
 
 Respond with JSON only, matching this shape:

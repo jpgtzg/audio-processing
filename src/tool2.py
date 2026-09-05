@@ -21,6 +21,11 @@ TOOL2_ESTATUS_IDS: list[int] = [
     ESTATUS_DESCARTADO_NOTICIERO,
     ESTATUS_DESCARTADO_CANCION,
 ]
+MOTIVO_DESCARTE_LABELS: dict[int, str] = {
+    ESTATUS_DESCARTADO_LOCUTOR: "LOCUTOR",
+    ESTATUS_DESCARTADO_NOTICIERO: "NOTICIERO",
+    ESTATUS_DESCARTADO_CANCION: "CANCION",
+}
 
 TESTIGO_ESTATUS_PROCESADO_CON_BLANK: int = 3
 TESTIGO_ESTATUS_REPROCESO: int = 5
@@ -139,6 +144,7 @@ def process(segment: dict) -> list[dict]:
             "id_segmento": segment["ID_SEGMENTO"],
             "id_testigo": segment["ID_TESTIGO"],
             "id_estatus_segmento": segment["ID_ESTATUS_SEGMENTO"],
+            "motivo_descarte": MOTIVO_DESCARTE_LABELS.get(segment["ID_ESTATUS_SEGMENTO"]),
             **mention,
         }
         for mention in mentions
@@ -166,10 +172,10 @@ def save_mentions(mentions: list[dict]) -> None:
     query = text(
         """
         INSERT INTO MENCIONES_COMERCIALES
-            (ID_SEGMENTO, ID_TESTIGO, ID_ESTATUS_SEGMENTO, TITULO, ANUNCIANTE, MARCA,
+            (ID_SEGMENTO, ID_TESTIGO, ID_ESTATUS_SEGMENTO, MOTIVO_DESCARTE, TITULO, ANUNCIANTE, MARCA,
              INICIO_MENCION, FIN_MENCION, TRANSCRIPCION)
         VALUES
-            (:id_segmento, :id_testigo, :id_estatus_segmento, :titulo, :anunciante, :marca,
+            (:id_segmento, :id_testigo, :id_estatus_segmento, :motivo_descarte, :titulo, :anunciante, :marca,
              :inicio_mencion, :fin_mencion, :transcripcion)
         """
     )
@@ -181,6 +187,8 @@ def save_mentions(mentions: list[dict]) -> None:
                     "id_segmento": m["id_segmento"],
                     "id_testigo": m["id_testigo"],
                     "id_estatus_segmento": m["id_estatus_segmento"],
+                    "motivo_descarte": m.get("motivo_descarte")
+                    or MOTIVO_DESCARTE_LABELS.get(m["id_estatus_segmento"]),
                     "titulo": m.get("marca"),
                     "anunciante": m.get("anunciante"),
                     "marca": m.get("marca"),
