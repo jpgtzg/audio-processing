@@ -24,3 +24,6 @@ docs/junta/
 # Local scratch space for downloaded/built executables
 share/
 *.exe
+
+# tool2 service runtime state (per-deployment, not shared)
+tool2_last_id_testigo.txt

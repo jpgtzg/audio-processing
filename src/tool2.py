@@ -212,6 +212,7 @@ def main(id_testigo_min: int | None = None) -> None:
 
     segments = fetch_discarded_segments(id_testigo_min=id_testigo_min)
     total = len(segments)
+    print(f"id_testigo_min={id_testigo_min}: found {total} segment(s) to process")
     max_id_testigo = id_testigo_min - 1
 
     for done, segment in enumerate(segments, start=1):
