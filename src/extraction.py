@@ -132,6 +132,14 @@ slogans, social media handles, or presenter/show names are self-promotion, not a
 advertiser, even if repeated constantly. Only report brands that are distinct from the station running
 the broadcast, i.e. something a real advertiser is paying to promote.
 
+**Also do not report other programs, newscasts, or syndicated content brands announced as part of the
+broadcast itself** — e.g. a syndicated newscast's own name ("Noticias Caracol", "El Financiero") said as
+programming identification ("los dejamos con el reporte de Noticias Caracol"). Even though these may be
+real, distinct companies, mentioning them this way is content credit/identification, not a commercial —
+they aren't paying to advertise a product or service in this clip. Only report a company/brand when the
+transcript is actually pitching or promoting something (a product, service, offer, or business), not just
+naming a program or content source.
+
 Write all output text in Spanish (brand/product names should stay as mentioned in the transcript).
 
 Respond with JSON only, matching this shape:
