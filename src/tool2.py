@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import time
 
 from pydub import AudioSegment
 from sqlalchemy import bindparam, text
@@ -10,6 +11,8 @@ from src.db.db import engine
 from src.extraction import extract_brand_mentions
 
 TESTIGO_SHARE_TEMPLATE = os.environ.get("TESTIGO_SHARE_TEMPLATE", r"\\{hostname}\sara")
+LAST_ID_TESTIGO_FILE = os.environ.get("TOOL2_LAST_ID_TESTIGO_FILE", "tool2_last_id_testigo.txt")
+POLL_INTERVAL_SECONDS = int(os.environ.get("TOOL2_POLL_INTERVAL_SECONDS", 60 * 60))
 ESTATUS_DESCARTADO_LOCUTOR: int = 10
 ESTATUS_DESCARTADO_NOTICIERO: int = 11
 ESTATUS_DESCARTADO_CANCION: int = 12
@@ -168,14 +171,50 @@ def save_mentions(mentions: list[dict]) -> None:
         conn.commit()
 
 
-def main(id_testigo_min: int) -> None:
+def read_last_id_testigo() -> int | None:
+    """The ID_TESTIGO of the last testigo Tool 2 finished processing, so an
+    hourly-scheduled run only looks at what's new since the previous run
+    instead of rescanning SEGMENTO_SARA (100M+ rows) from scratch each time.
+    None the first time this ever runs -- caller must supply an explicit
+    starting point in that case."""
+    if not os.path.exists(LAST_ID_TESTIGO_FILE):
+        return None
+    with open(LAST_ID_TESTIGO_FILE) as f:
+        content = f.read().strip()
+    return int(content) if content else None
+
+
+def write_last_id_testigo(id_testigo: int) -> None:
+    with open(LAST_ID_TESTIGO_FILE, "w") as f:
+        f.write(str(id_testigo))
+
+
+def main(id_testigo_min: int | None = None) -> None:
+    """Runs once over every discarded segment with ID_TESTIGO >= id_testigo_min.
+    If id_testigo_min isn't given, resumes from the last ID_TESTIGO this
+    process finished on (see read_last_id_testigo()) -- pass it explicitly
+    only for a one-off backfill/dry run. On a normal run, advances the saved
+    ID_TESTIGO past every testigo actually seen this time, regardless of
+    per-segment errors, so a permanently-missing recording (FileNotFoundError)
+    doesn't stall future runs retrying it forever."""
+    resumed = id_testigo_min is None
+    if resumed:
+        id_testigo_min = read_last_id_testigo()
+        if id_testigo_min is None:
+            raise SystemExit(
+                f"no saved progress in {LAST_ID_TESTIGO_FILE} -- run once with an "
+                "explicit id_testigo_min to establish a starting point"
+            )
+
     segments = fetch_discarded_segments(id_testigo_min=id_testigo_min)
     total = len(segments)
+    max_id_testigo = id_testigo_min - 1
 
     for done, segment in enumerate(segments, start=1):
         label = f"ID_SEGMENTO={segment['ID_SEGMENTO']}"
         print("=" * 40)
         print("Processing segment:", label)
+        max_id_testigo = max(max_id_testigo, segment["ID_TESTIGO"])
 
         try:
             results = process(segment)
@@ -194,11 +233,36 @@ def main(id_testigo_min: int) -> None:
                 f"({result['start']:.2f}s-{result['end']:.2f}s)"
             )
 
+    if resumed:
+        write_last_id_testigo(max_id_testigo + 1)
+
+
+def run_forever(poll_interval_seconds: int = POLL_INTERVAL_SECONDS) -> None:
+    """Service entrypoint: runs main() on a loop, sleeping poll_interval_seconds
+    between runs, resuming from the saved ID_TESTIGO each time (see main()/
+    read_last_id_testigo()). A single run's failure (e.g. a transient DB or
+    share outage) is logged and skipped rather than killing the service --
+    the next iteration just retries from the same saved position."""
+    while True:
+        try:
+            main()
+        except Exception as e:
+            print(f"run failed, will retry next cycle: {e}")
+        time.sleep(poll_interval_seconds)
+
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) > 2:
         raise SystemExit(
-            "usage: python -m src.tool2 <id_testigo_min>\n"
-            "SEGMENTO_SARA is 100M+ rows -- a lower bound on ID_TESTIGO is required."
+            "usage: python -m src.tool2 [id_testigo_min]\n"
+            "With an argument: runs once, seeding/overriding the saved ID_TESTIGO "
+            f"({LAST_ID_TESTIGO_FILE}) -- use this for a one-off backfill or to "
+            "establish the very first starting point.\n"
+            "With no argument: runs forever as a service, polling every "
+            f"{POLL_INTERVAL_SECONDS}s (override via TOOL2_POLL_INTERVAL_SECONDS) "
+            "and resuming from the saved ID_TESTIGO each cycle."
         )
-    main(id_testigo_min=int(sys.argv[1]))
+    if len(sys.argv) == 2:
+        main(id_testigo_min=int(sys.argv[1]))
+    else:
+        run_forever()
