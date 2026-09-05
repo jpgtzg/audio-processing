@@ -82,6 +82,12 @@ Before this was known, `src/tool2.py`'s `crop_segment()` loaded the whole stereo
 
 **Open question — does this affect Tool 1 too?** `client_data/wav2` (Tool 1's already-cropped ad clips) come pre-extracted by SARA's own pipeline, not read directly from a raw testigo file by our code — so it's unconfirmed whether SARA already isolates the correct channel before producing those clips, or whether they could carry the same dual-emission problem. Worth asking the client directly before Tool 1's DB-driven file loop is built.
 
+## Missing testigo files — filtered by TESTIGO_SARA.ID_ESTATUS_TESTIGO (client confirmed 2026-09-05)
+
+Dry-running `tool2_test.exe` against fresh `sara3` data repeatedly hit `FileNotFoundError` — every candidate testigo above the scan's lower bound pointed at the same stale 2026-09-03 10:00 batch, and those files are already gone from the live share (see "File access" above; raw mp3 retention is shorter than the DB snapshot's staleness). Separately from that freshness gap, the client flagged that `fetch_discarded_segments()` was never filtering on the parent testigo's own processing status at all — it only checked `SEGMENTO_SARA.ID_ESTATUS_SEGMENTO`, so it could pick up testigos SARA hadn't actually finished processing yet, which are also not reliably present on the share.
+
+**Fixed (2026-09-05)**: `fetch_discarded_segments()` (and `scripts/tool2_test.py`'s equivalent query) now also requires `TESTIGO_SARA.ID_ESTATUS_TESTIGO IN (3, 5)` — "Procesado con Blank" (3) and "Reproceso" (5), the two statuses the client identified as testigos SARA itself considers finished, and therefore actually still on disk. New constants: `TESTIGO_ESTATUS_PROCESADO_CON_BLANK`, `TESTIGO_ESTATUS_REPROCESO`, `TOOL2_TESTIGO_ESTATUS_IDS` in `src/tool2.py`.
+
 ## Whisper truncation bug — the main technical problem this session, now fixed
 
 **Symptom**: `whisper-1` sometimes silently stops transcribing partway through a clip — not due to real silence (checked via dBFS), but an internal decoder heuristic ("am I done?") firing prematurely, often around a topic shift, station-ID tag, or music bed. There's no API-exposed parameter to tune this directly on the hosted `whisper-1` endpoint (confirmed via external research, see `docs/transcript_research.md`). Alternative model `gpt-4o-transcribe` was evaluated and rejected — different failure mode (drops other content, non-deterministic, no seed control).

@@ -22,14 +22,29 @@ TOOL2_ESTATUS_IDS: list[int] = [
     ESTATUS_DESCARTADO_CANCION,
 ]
 
+TESTIGO_ESTATUS_PROCESADO_CON_BLANK: int = 3
+TESTIGO_ESTATUS_REPROCESO: int = 5
+TOOL2_TESTIGO_ESTATUS_IDS: list[int] = [
+    TESTIGO_ESTATUS_PROCESADO_CON_BLANK,
+    TESTIGO_ESTATUS_REPROCESO,
+]
+
 
 def fetch_discarded_segments(
     estatus_ids: list[int] = TOOL2_ESTATUS_IDS,
+    testigo_estatus_ids: list[int] = TOOL2_TESTIGO_ESTATUS_IDS,
     id_testigo_min: int | None = None,
 ) -> list[dict]:
     """SEGMENTO_SARA rows discarded for one of the given ID_ESTATUS_SEGMENTO
     reasons, joined against TESTIGO_SARA for HOSTNAME/ARCHIVO so each row is
     enough to locate and crop the actual clip (see resolve_testigo_path()).
+
+    Also requires the parent testigo's own ID_ESTATUS_TESTIGO to be one of
+    testigo_estatus_ids -- client-requested (2026-09-05) restriction to
+    "Procesado con Blank" (3) / "Reproceso" (5) testigos, since those are the
+    ones SARA itself considers finished processing and therefore actually
+    still present on the live share; other testigo statuses were turning up
+    as FileNotFoundError (see docs/handoff.md).
 
     SEGMENTO_SARA is 100M+ rows (12M+ for song-discard alone) -- always pass
     id_testigo_min (or add another bound) rather than pulling the whole table."""
@@ -40,15 +55,23 @@ def fetch_discarded_segments(
         FROM SEGMENTO_SARA s
         JOIN TESTIGO_SARA t ON s.ID_TESTIGO = t.ID_TESTIGO
         WHERE s.ID_ESTATUS_SEGMENTO IN :estatus_ids
+          AND t.ID_ESTATUS_TESTIGO IN :testigo_estatus_ids
           AND (:id_testigo_min IS NULL OR s.ID_TESTIGO >= :id_testigo_min)
         """
-    ).bindparams(bindparam("estatus_ids", expanding=True))
+    ).bindparams(
+        bindparam("estatus_ids", expanding=True),
+        bindparam("testigo_estatus_ids", expanding=True),
+    )
 
     with engine.connect() as conn:
         rows = (
             conn.execute(
                 query,
-                {"estatus_ids": list(estatus_ids), "id_testigo_min": id_testigo_min},
+                {
+                    "estatus_ids": list(estatus_ids),
+                    "testigo_estatus_ids": list(testigo_estatus_ids),
+                    "id_testigo_min": id_testigo_min,
+                },
             )
             .mappings()
             .all()

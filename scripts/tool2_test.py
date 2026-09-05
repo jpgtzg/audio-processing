@@ -29,6 +29,7 @@ from src.extraction import extract_brand_mentions
 from src.tool2 import (
     TESTIGO_SHARE_TEMPLATE,
     TOOL2_ESTATUS_IDS,
+    TOOL2_TESTIGO_ESTATUS_IDS,
     crop_segment,
     resolve_testigo_path,
 )
@@ -43,6 +44,7 @@ def fetch_segments_for_host(
     limit: int = DEFAULT_LIMIT,
     id_testigo_min: int | None = DEFAULT_ID_TESTIGO_MIN,
     estatus_ids: list[int] = TOOL2_ESTATUS_IDS,
+    testigo_estatus_ids: list[int] = TOOL2_TESTIGO_ESTATUS_IDS,
 ) -> list[dict]:
     """Same query as src/tool2.py's fetch_discarded_segments(), narrowed to one
     host and capped at `limit` distinct *testigos* (one segment each) rather
@@ -58,6 +60,7 @@ def fetch_segments_for_host(
             FROM SEGMENTO_SARA s
             JOIN TESTIGO_SARA t ON s.ID_TESTIGO = t.ID_TESTIGO
             WHERE s.ID_ESTATUS_SEGMENTO IN :estatus_ids
+              AND t.ID_ESTATUS_TESTIGO IN :testigo_estatus_ids
               AND UPPER(t.HOSTNAME) = UPPER(:hostname)
               AND (:id_testigo_min IS NULL OR s.ID_TESTIGO >= :id_testigo_min)
         )
@@ -67,7 +70,10 @@ def fetch_segments_for_host(
         WHERE rn = 1
         ORDER BY ID_TESTIGO DESC
         """
-    ).bindparams(bindparam("estatus_ids", expanding=True))
+    ).bindparams(
+        bindparam("estatus_ids", expanding=True),
+        bindparam("testigo_estatus_ids", expanding=True),
+    )
 
     with engine.connect() as conn:
         rows = (
@@ -75,6 +81,7 @@ def fetch_segments_for_host(
                 query,
                 {
                     "estatus_ids": list(estatus_ids),
+                    "testigo_estatus_ids": list(testigo_estatus_ids),
                     "hostname": hostname,
                     "id_testigo_min": id_testigo_min,
                 },
