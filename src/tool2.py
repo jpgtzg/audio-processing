@@ -171,17 +171,26 @@ def save_mentions(mentions: list[dict]) -> None:
         conn.commit()
 
 
-def read_last_id_testigo() -> int | None:
+def _current_max_id_testigo() -> int:
+    """Live MAX(ID_TESTIGO) in TESTIGO_SARA -- used to seed the saved position
+    the very first time the service runs, so it starts watching from "now"
+    instead of backfilling the entire history."""
+    with engine.connect() as conn:
+        return conn.execute(text("SELECT MAX(ID_TESTIGO) FROM TESTIGO_SARA")).scalar()
+
+
+def read_last_id_testigo() -> int:
     """The ID_TESTIGO of the last testigo Tool 2 finished processing, so an
     hourly-scheduled run only looks at what's new since the previous run
     instead of rescanning SEGMENTO_SARA (100M+ rows) from scratch each time.
-    None the first time this ever runs -- caller must supply an explicit
-    starting point in that case."""
+    If the state file doesn't exist yet (first-ever run), seeds it with the
+    current MAX(ID_TESTIGO) and starts from there."""
     if not os.path.exists(LAST_ID_TESTIGO_FILE):
-        return None
+        seed = _current_max_id_testigo()
+        write_last_id_testigo(seed)
+        return seed
     with open(LAST_ID_TESTIGO_FILE) as f:
-        content = f.read().strip()
-    return int(content) if content else None
+        return int(f.read().strip())
 
 
 def write_last_id_testigo(id_testigo: int) -> None:
@@ -200,11 +209,6 @@ def main(id_testigo_min: int | None = None) -> None:
     resumed = id_testigo_min is None
     if resumed:
         id_testigo_min = read_last_id_testigo()
-        if id_testigo_min is None:
-            raise SystemExit(
-                f"no saved progress in {LAST_ID_TESTIGO_FILE} -- run once with an "
-                "explicit id_testigo_min to establish a starting point"
-            )
 
     segments = fetch_discarded_segments(id_testigo_min=id_testigo_min)
     total = len(segments)
