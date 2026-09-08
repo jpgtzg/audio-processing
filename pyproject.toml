@@ -13,6 +13,7 @@ dependencies = [
     "pymssql>=2.3.13",
     "pyodbc>=5.3.0",
     "python-dotenv>=1.2.2",
+    "rapidfuzz>=3.14.6",
     "sqlalchemy>=2.0.51",
 ]
 

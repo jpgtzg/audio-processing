@@ -135,12 +135,10 @@ def process(segment: dict) -> list[dict]:
     finally:
         os.remove(clip_path)
 
-    transcript = " ".join(s["text"] for s in segments)
     mentions = extract_brand_mentions(segments)
 
     return [
         {
-            "transcript": transcript,
             "id_segmento": segment["ID_SEGMENTO"],
             "id_testigo": segment["ID_TESTIGO"],
             "id_estatus_segmento": segment["ID_ESTATUS_SEGMENTO"],
@@ -156,6 +154,14 @@ def save_mentions(mentions: list[dict]) -> None:
     scripts/create_mentions_table.py -- must be run once, by a DB login with
     CREATE TABLE rights, before this will work; the login used for day-to-day
     reads/writes only has SELECT so far).
+
+    Client-requested (2026-09-08): ANUNCIANTE/MARCA stay as the raw text Whisper
+    extraction detected (kept so a capturista can see/link a mention even when
+    it doesn't match anything in the catalogs); NUM_ANUNC/NUM_MARCA carry the
+    fuzzy-matched ANUNCIANTES.NUM_ANUNC/MARCAS.NUM_MARCA IDs when confident
+    (see extraction.match_anunciante()/match_marca()), NULL otherwise.
+    TRANSCRIPCION now stores only the sentence(s) spanning the mention itself,
+    not the whole clip's transcript.
 
     TITULO currently reuses MARCA -- Tool 2 doesn't generate a separate spot
     title the way Tool 1's extraction does; revisit if the client wants one."""
@@ -173,10 +179,10 @@ def save_mentions(mentions: list[dict]) -> None:
         """
         INSERT INTO MENCIONES_COMERCIALES
             (ID_SEGMENTO, ID_TESTIGO, ID_ESTATUS_SEGMENTO, MOTIVO_DESCARTE, TITULO, ANUNCIANTE, MARCA,
-             INICIO_MENCION, FIN_MENCION, TRANSCRIPCION)
+             NUM_ANUNC, NUM_MARCA, INICIO_MENCION, FIN_MENCION, TRANSCRIPCION)
         VALUES
             (:id_segmento, :id_testigo, :id_estatus_segmento, :motivo_descarte, :titulo, :anunciante, :marca,
-             :inicio_mencion, :fin_mencion, :transcripcion)
+             :num_anunc, :num_marca, :inicio_mencion, :fin_mencion, :transcripcion)
         """
     )
     with engine.connect() as conn:
@@ -192,9 +198,11 @@ def save_mentions(mentions: list[dict]) -> None:
                     "titulo": m.get("marca"),
                     "anunciante": m.get("anunciante"),
                     "marca": m.get("marca"),
+                    "num_anunc": m.get("num_anunc"),
+                    "num_marca": m.get("num_marca"),
                     "inicio_mencion": m["start"],
                     "fin_mencion": m["end"],
-                    "transcripcion": m.get("transcript"),
+                    "transcripcion": m.get("mention_transcript"),
                 }
                 for m in mentions
             ],

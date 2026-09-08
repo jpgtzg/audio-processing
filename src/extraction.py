@@ -1,9 +1,11 @@
 import json
 import os
+import re
 from functools import lru_cache
 
 from dotenv import load_dotenv
 from openai import OpenAI
+from rapidfuzz import fuzz, process as fuzzy_process
 from sqlalchemy import text
 
 from src.db.db import engine
@@ -11,6 +13,20 @@ from src.db.db import engine
 load_dotenv()
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+ANUNCIANTE_MATCH_THRESHOLD = float(os.environ.get("ANUNCIANTE_MATCH_THRESHOLD", 88))
+MARCA_MATCH_THRESHOLD = float(os.environ.get("MARCA_MATCH_THRESHOLD", 90))
+
+
+def _fuzzy_match_key(s: str) -> str:
+    """Normalizes a string for fuzzy matching: uppercase, punctuation/whitespace
+    stripped entirely (not replaced with spaces -- rapidfuzz's own
+    utils.default_process replaces punctuation with spaces, which drags down
+    scores for abbreviations like "H.E.B" vs "HEB"). Also required just to get
+    case-insensitivity at all: rapidfuzz's scorers are case-sensitive at the
+    character level, so "Soriana" vs the catalog's "SORIANA" would otherwise
+    score as if 6 of 7 letters differ."""
+    return re.sub(r"[^A-Z0-9]", "", s.upper())
 
 
 @lru_cache(maxsize=1)
@@ -24,6 +40,92 @@ def get_categorias() -> list[str]:
             text("SELECT TIT_SUB3 FROM SUBCAT3 ORDER BY TIT_SUB3")
         ).scalars().all()
     return list(rows)
+
+
+@lru_cache(maxsize=1)
+def get_anunciantes() -> list[dict]:
+    """ANUNCIANTES catalog (15k+ rows) -- too large to hand to an LLM as a closed
+    list the way get_categorias()/get_marcas() are, so this backs fuzzy matching
+    (match_anunciante()) instead. Cached per-process; the catalog changes rarely
+    relative to a single run."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT NUM_ANUNC, TIT_ANUNC, ABREV_ANUNC FROM ANUNCIANTES")
+        ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+@lru_cache(maxsize=1)
+def get_marcas() -> list[dict]:
+    """MARCAS catalog -- small enough (581 rows) to fuzzy-match directly, same
+    approach as get_anunciantes(). Cached per-process."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT NUM_MARCA, TIT_MARCA FROM MARCAS")
+        ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def match_anunciante(detected: str | None) -> tuple[int | None, float | None]:
+    """Fuzzy-matches a detected advertiser name against ANUNCIANTES.TIT_ANUNC and
+    ABREV_ANUNC (whichever scores higher), returning (NUM_ANUNC, score) or
+    (None, None) if nothing clears ANUNCIANTE_MATCH_THRESHOLD -- e.g. a real but
+    uncatalogued local advertiser. Caller should keep the raw detected text
+    around even on a miss, for manual linking later.
+
+    Uses plain fuzz.ratio (not WRatio) -- WRatio's partial-ratio component is
+    too generous against a 15k-row catalog: a long, generic detected phrase can
+    score 85+ against an unrelated catalog entry purely from sharing one common
+    word (verified against real ANUNCIANTES rows). Plain ratio penalizes that
+    kind of mismatch far more, at the cost of being stricter about close-but-
+    not-exact real matches -- an acceptable trade since a missed match just
+    stays NULL with the raw text preserved, while a wrong auto-assigned ID
+    could misattribute a mention to an unrelated real company."""
+    if not detected or not detected.strip():
+        return None, None
+
+    anunciantes = get_anunciantes()
+    tit_candidates = {r["NUM_ANUNC"]: r["TIT_ANUNC"] for r in anunciantes if r["TIT_ANUNC"]}
+    abrev_candidates = {r["NUM_ANUNC"]: r["ABREV_ANUNC"] for r in anunciantes if r["ABREV_ANUNC"]}
+
+    best = None
+    for candidates in (tit_candidates, abrev_candidates):
+        match = fuzzy_process.extractOne(
+            detected, candidates, scorer=fuzz.ratio, processor=_fuzzy_match_key
+        )
+        if match is not None and (best is None or match[1] > best[1]):
+            best = match
+
+    if best is None or best[1] < ANUNCIANTE_MATCH_THRESHOLD:
+        return None, None
+    _, score, num_anunc = best
+    return num_anunc, score
+
+
+def match_marca(detected: str | None) -> tuple[int | None, float | None]:
+    """Fuzzy-matches a detected brand name against MARCAS.TIT_MARCA.
+
+    Unlike match_anunciante(), uses fuzz.partial_ratio, not plain ratio --
+    MARCAS entries often carry a "GRUPO X" company-level prefix around the
+    actual brand name (e.g. "GRUPO COCA COLA", "GRUPO CHEVROLET DEL RIO
+    AGENCI"), which plain ratio penalizes heavily for the length mismatch even
+    on an exact brand match. MARCAS is small (581 rows, verified no candidate
+    shorter than "BMW"/3 chars) so partial_ratio's usual risk of matching a
+    short candidate as a trivial substring of anything is much lower here than
+    it would be against the 15k-row ANUNCIANTES catalog -- kept at a higher
+    threshold than match_anunciante() as extra safety margin regardless."""
+    if not detected or not detected.strip():
+        return None, None
+
+    marcas = get_marcas()
+    candidates = {r["NUM_MARCA"]: r["TIT_MARCA"] for r in marcas if r["TIT_MARCA"]}
+    match = fuzzy_process.extractOne(
+        detected, candidates, scorer=fuzz.partial_ratio, processor=_fuzzy_match_key
+    )
+    if match is None or match[1] < MARCA_MATCH_THRESHOLD:
+        return None, None
+    _, score, num_marca = match
+    return num_marca, score
 
 
 def _build_system_prompt() -> str:
@@ -170,7 +272,12 @@ Respond with JSON only, matching this shape:
 def extract_brand_mentions(segments: list[dict]) -> list[dict]:
     """Given timestamped transcript segments (as returned by
     audio.transcribe_timestamped_segments), finds brand/advertiser mentions and resolves
-    each one's segment-index span back to real start/end times in seconds."""
+    each one's segment-index span back to real start/end times in seconds.
+
+    Client-requested (2026-09-08): "mention_transcript" carries only the sentence(s)
+    spanning start_segment..end_segment, not the whole clip's transcript -- previously
+    every mention from the same segment repeated the entire (sometimes minutes-long)
+    transcript in MENCIONES_COMERCIALES.TRANSCRIPCION."""
     if not segments:
         return []
 
@@ -199,12 +306,24 @@ def extract_brand_mentions(segments: list[dict]) -> list[dict]:
             continue
         if not (0 <= start_idx < len(segments) and 0 <= end_idx < len(segments)):
             continue
+        detected_marca = mention.get("marca")
+        detected_anunciante = mention.get("anunciante")
+        num_marca, marca_score = match_marca(detected_marca)
+        num_anunc, anunciante_score = match_anunciante(detected_anunciante)
+
         mentions.append(
             {
-                "marca": mention.get("marca"),
-                "anunciante": mention.get("anunciante"),
+                "marca": detected_marca,
+                "anunciante": detected_anunciante,
+                "num_marca": num_marca,
+                "marca_match_score": marca_score,
+                "num_anunc": num_anunc,
+                "anunciante_match_score": anunciante_score,
                 "start": segments[start_idx]["start"],
                 "end": segments[end_idx]["end"],
+                "mention_transcript": " ".join(
+                    segments[i]["text"] for i in range(start_idx, end_idx + 1)
+                ),
             }
         )
 

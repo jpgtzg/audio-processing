@@ -198,6 +198,12 @@ def main() -> None:
                     f"  mention: {mention.get('anunciante')} / {mention.get('marca')} "
                     f"({mention.get('start'):.2f}s-{mention.get('end'):.2f}s)"
                 )
+                lines.append(
+                    f"    matched: NUM_ANUNC={mention.get('num_anunc')} "
+                    f"(score={mention.get('anunciante_match_score')}) "
+                    f"NUM_MARCA={mention.get('num_marca')} (score={mention.get('marca_match_score')})"
+                )
+                lines.append(f"    mention_transcript: {mention.get('mention_transcript')}")
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")

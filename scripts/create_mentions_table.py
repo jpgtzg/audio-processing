@@ -1,7 +1,8 @@
 r"""One-off script: creates MENCIONES_COMERCIALES, Tool 2's output table, which
 doesn't exist in the client's schema yet (see docs/progress.md). Idempotent --
-safe to re-run; also adds MOTIVO_DESCARTE to an already-existing table that
-predates that column (see ADD_MOTIVO_DESCARTE_SQL below).
+safe to re-run; also adds any column in COLUMN_MIGRATIONS below that's missing
+from an already-existing table (a prior run of this script, or the client's own
+snapshot restore, may predate a given column).
 
 Columns:
     ID_MENCION            identity PK
@@ -11,15 +12,25 @@ Columns:
     MOTIVO_DESCARTE        human-readable version of ID_ESTATUS_SEGMENTO
                            ("LOCUTOR"/"NOTICIERO"/"CANCION") so this is readable
                            without joining back to a catalog table
-    TITULO/ANUNCIANTE/MARCA, TRANSCRIPCION
+    TITULO                 currently reuses MARCA (see src/tool2.py save_mentions())
+    ANUNCIANTE/MARCA       raw text Whisper extraction detected -- kept even when
+                           NUM_ANUNC/NUM_MARCA below has no confident match, so a
+                           capturista can still see/link the mention manually
+    NUM_ANUNC/NUM_MARCA    fuzzy-matched ANUNCIANTES.NUM_ANUNC/MARCAS.NUM_MARCA IDs
+                           (client-requested 2026-09-08; see src/extraction.py
+                           match_anunciante()/match_marca()), NULL if no confident
+                           match was found
     INICIO_MENCION/FIN_MENCION  mention span, in seconds within the clip
+    TRANSCRIPCION          only the sentence(s) spanning the mention itself
+                           (client-requested 2026-09-08 -- previously the whole
+                           clip's transcript, repeated on every mention row)
     ID_ESTATUS_VALIDACION default 1 ("pending validation" -- no catalog table
                            backs this yet, mirrors ALTAS_SARA_FP's open question
                            about a "Pendiente de Validacion" status)
     FECHA_ALTA             defaults to now
 
-No FK constraints to SEGMENTO_SARA -- test DB data isn't guaranteed clean enough
-to enforce that safely from here.
+No FK constraints to SEGMENTO_SARA/ANUNCIANTES/MARCAS -- test DB data isn't
+guaranteed clean enough to enforce that safely from here.
 """
 
 from sqlalchemy import text
@@ -36,6 +47,8 @@ CREATE TABLE MENCIONES_COMERCIALES (
     TITULO VARCHAR(200) NULL,
     ANUNCIANTE VARCHAR(200) NULL,
     MARCA VARCHAR(200) NULL,
+    NUM_ANUNC INT NULL,
+    NUM_MARCA INT NULL,
     INICIO_MENCION NUMERIC(10,2) NOT NULL,
     FIN_MENCION NUMERIC(10,2) NOT NULL,
     TRANSCRIPCION VARCHAR(MAX) NULL,
@@ -44,9 +57,13 @@ CREATE TABLE MENCIONES_COMERCIALES (
 )
 """
 
-ADD_MOTIVO_DESCARTE_SQL = """
-ALTER TABLE MENCIONES_COMERCIALES ADD MOTIVO_DESCARTE VARCHAR(20) NULL
-"""
+# (column_name, ALTER TABLE statement to add it) -- applied in order to an
+# already-existing table, skipping any column that's already there.
+COLUMN_MIGRATIONS: list[tuple[str, str]] = [
+    ("MOTIVO_DESCARTE", "ALTER TABLE MENCIONES_COMERCIALES ADD MOTIVO_DESCARTE VARCHAR(20) NULL"),
+    ("NUM_ANUNC", "ALTER TABLE MENCIONES_COMERCIALES ADD NUM_ANUNC INT NULL"),
+    ("NUM_MARCA", "ALTER TABLE MENCIONES_COMERCIALES ADD NUM_MARCA INT NULL"),
+]
 
 
 def main():
@@ -55,16 +72,21 @@ def main():
             text("SELECT OBJECT_ID('MENCIONES_COMERCIALES')")
         ).scalar()
         if exists is not None:
-            column_exists = conn.execute(
-                text(
-                    "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
-                    "WHERE TABLE_NAME = 'MENCIONES_COMERCIALES' AND COLUMN_NAME = 'MOTIVO_DESCARTE'"
-                )
-            ).scalar()
-            if column_exists is None:
-                conn.execute(text(ADD_MOTIVO_DESCARTE_SQL))
+            added = []
+            for column_name, alter_sql in COLUMN_MIGRATIONS:
+                column_exists = conn.execute(
+                    text(
+                        "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+                        "WHERE TABLE_NAME = 'MENCIONES_COMERCIALES' AND COLUMN_NAME = :column_name"
+                    ),
+                    {"column_name": column_name},
+                ).scalar()
+                if column_exists is None:
+                    conn.execute(text(alter_sql))
+                    added.append(column_name)
+            if added:
                 conn.commit()
-                print("MENCIONES_COMERCIALES already exists -- added MOTIVO_DESCARTE column.")
+                print(f"MENCIONES_COMERCIALES already exists -- added columns: {', '.join(added)}.")
             else:
                 print("MENCIONES_COMERCIALES already exists, skipping.")
             return
