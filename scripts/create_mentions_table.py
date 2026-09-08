@@ -24,6 +24,8 @@ Columns:
     TRANSCRIPCION          only the sentence(s) spanning the mention itself
                            (client-requested 2026-09-08 -- previously the whole
                            clip's transcript, repeated on every mention row)
+    TRANSCRIPCION_COMPLETA the entire clip's transcript, kept alongside
+                           TRANSCRIPCION for full context on review
     ID_ESTATUS_VALIDACION default 1 ("pending validation" -- no catalog table
                            backs this yet, mirrors ALTAS_SARA_FP's open question
                            about a "Pendiente de Validacion" status)
@@ -52,6 +54,7 @@ CREATE TABLE MENCIONES_COMERCIALES (
     INICIO_MENCION NUMERIC(10,2) NOT NULL,
     FIN_MENCION NUMERIC(10,2) NOT NULL,
     TRANSCRIPCION VARCHAR(MAX) NULL,
+    TRANSCRIPCION_COMPLETA VARCHAR(MAX) NULL,
     ID_ESTATUS_VALIDACION INT NOT NULL DEFAULT 1,
     FECHA_ALTA DATETIME NOT NULL DEFAULT GETDATE()
 )
@@ -63,6 +66,7 @@ COLUMN_MIGRATIONS: list[tuple[str, str]] = [
     ("MOTIVO_DESCARTE", "ALTER TABLE MENCIONES_COMERCIALES ADD MOTIVO_DESCARTE VARCHAR(20) NULL"),
     ("NUM_ANUNC", "ALTER TABLE MENCIONES_COMERCIALES ADD NUM_ANUNC INT NULL"),
     ("NUM_MARCA", "ALTER TABLE MENCIONES_COMERCIALES ADD NUM_MARCA INT NULL"),
+    ("TRANSCRIPCION_COMPLETA", "ALTER TABLE MENCIONES_COMERCIALES ADD TRANSCRIPCION_COMPLETA VARCHAR(MAX) NULL"),
 ]
 
 
