@@ -11,9 +11,17 @@ from src.db.settings import settings
 # wire protocol via freetds.conf instead of negotiating modern TLS.
 os.environ["FREETDSCONF"] = os.path.join(os.path.dirname(__file__), "freetds.conf")
 
+# DB_SERVER_PORT is optional -- the client's real production DB was handed over
+# as just a server URL, database, login, and password, with no port. Omitting
+# the port from the connection string lets pymssql/FreeTDS fall back to SQL
+# Server's default (1433) rather than requiring one to always be specified.
+_host = settings.DB_SERVER_URL
+if settings.DB_SERVER_PORT:
+    _host = f"{_host}:{settings.DB_SERVER_PORT}"
+
 engine = create_engine(
     f"mssql+pymssql://{settings.DB_LOGIN}:{settings.DB_PASSWORD}"
-    f"@{settings.DB_SERVER_URL}:{settings.DB_SERVER_PORT}/{settings.DB_SERVER_DATABASE}"
+    f"@{_host}/{settings.DB_SERVER_DATABASE}"
 )
 
 Session = sessionmaker(bind=engine)

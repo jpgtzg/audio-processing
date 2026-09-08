@@ -38,6 +38,8 @@ The `segmentation.py`/`slicing.py` boundary-detection logic is no longer part of
 
 Quick summary — SQL Server `OrbitMedia_Test` (SQL Server 2008). `pymssql` (built on FreeTDS, forcing `tds version = 7.0` via `src/db/freetds.conf`) is what actually connects — modern ODBC drivers fail TLS negotiation against a server this old. `src/db/db.py` wires this up as a SQLAlchemy engine using `.env` credentials (`DB_SERVER_URL`, `DB_SERVER_PORT`, `DB_SERVER_DATABASE`, `DB_LOGIN`, `DB_PASSWORD`, loaded via `src/models/settings.py`).
 
+**`DB_SERVER_PORT` is optional (2026-09-08)**: the client handed over real production DB access as just a server URL, database name, login, and password — no port. `settings.py`/`db.py` now treat `DB_SERVER_PORT` as optional; when unset, the connection string omits the port entirely and pymssql/FreeTDS falls back to SQL Server's default (1433). To point this project at the production DB, set `DB_SERVER_URL`/`DB_SERVER_DATABASE`/`DB_LOGIN`/`DB_PASSWORD` in `.env` and simply leave `DB_SERVER_PORT` unset (or blank).
+
 - **`TESTIGO_SARA`** — 2-hour station recordings. `HOSTNAME` + `ARCHIVO` point at the file on one of ~27 capture PCs (`SARA2`…`SARA40`).
 - **`SEGMENTO_SARA`** — segments cut from a testigo. `ID_FP` null = unidentified.
 - **`ALTAS_SARA_FP`** — **Tool 1's real entry point, and its write target.** SARA's own new-commercial alta queue.
