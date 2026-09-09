@@ -290,6 +290,16 @@ def main(id_testigo_min: int | None = None) -> None:
         except FileNotFoundError:
             print(f"[{done}/{total}] {label}: recording not reachable, skipping")
             continue
+        except Exception as e:
+            # Any other per-segment failure (corrupt/locked file, decode error,
+            # OS-level path errors, transient share hiccups, etc.) must not abort
+            # the whole run -- max_id_testigo above already advanced past this
+            # segment's testigo, but write_last_id_testigo() only runs after this
+            # loop finishes, so an uncaught exception here previously meant the
+            # saved position never moved and the *same* bad segment was retried,
+            # unchanged, every single cycle forever. Log and move on instead.
+            print(f"[{done}/{total}] {label}: processing failed ({e!r}), skipping")
+            continue
 
         if not results:
             print(f"[{done}/{total}] {label}: no brand mentions found")
