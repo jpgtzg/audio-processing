@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import tempfile
 import time
@@ -11,6 +12,7 @@ from src.db.db import engine
 from src.extraction import extract_brand_mentions
 
 TESTIGO_SHARE_TEMPLATE = os.environ.get("TESTIGO_SHARE_TEMPLATE", r"\\{hostname}\sara")
+DEBUG_MENTIONS_DIR = os.environ.get("TOOL2_DEBUG_MENTIONS_DIR", "debug_mentions")
 LAST_ID_TESTIGO_FILE = os.environ.get("TOOL2_LAST_ID_TESTIGO_FILE", "tool2_last_id_testigo.txt")
 POLL_INTERVAL_SECONDS = int(os.environ.get("TOOL2_POLL_INTERVAL_SECONDS", 60 * 60))
 ESTATUS_DESCARTADO_LOCUTOR: int = 10
@@ -119,6 +121,24 @@ def crop_segment(testigo_path: str, inicio: float, duracion: float, canal: int) 
     return tmp_path
 
 
+def save_mention_debug_clip(clip_path: str, segment: dict, mention: dict) -> str:
+    """DEBUG (temporary, 2026-09-09): cuts out just the audio spanning a detected
+    mention (mention['start']/['end'], seconds into the already-cropped clip) and
+    saves it to DEBUG_MENTIONS_DIR so it can be listened to directly -- lets us
+    check by ear whether a detection is a real spot or still a bare-mention false
+    positive, while the "spot, not mention" prompt reframing is unvalidated
+    against live data (see docs/progress.md). Remove once that's confirmed."""
+    os.makedirs(DEBUG_MENTIONS_DIR, exist_ok=True)
+    audio = AudioSegment.from_file(clip_path)
+    start_ms = int(mention["start"] * 1000)
+    end_ms = int(mention["end"] * 1000)
+    marca = re.sub(r"[^A-Za-z0-9_-]+", "_", str(mention.get("marca") or "mention")).strip("_")[:50]
+    filename = f"{segment['ID_SEGMENTO']}_{marca or 'mention'}_{start_ms}-{end_ms}ms.wav"
+    out_path = os.path.join(DEBUG_MENTIONS_DIR, filename)
+    audio[start_ms:end_ms].export(out_path, format="wav")
+    return out_path
+
+
 def process(segment: dict) -> list[dict]:
     """Transcribes a single discarded/oversized segment (one row from
     fetch_discarded_segments()) and returns one row per detected brand mention
@@ -132,11 +152,12 @@ def process(segment: dict) -> list[dict]:
 
     try:
         segments = transcribe_timestamped_segments(clip_path)
+        full_transcript = " ".join(s["text"] for s in segments)
+        mentions = extract_brand_mentions(segments)
+        for mention in mentions:
+            save_mention_debug_clip(clip_path, segment, mention)
     finally:
         os.remove(clip_path)
-
-    full_transcript = " ".join(s["text"] for s in segments)
-    mentions = extract_brand_mentions(segments)
 
     return [
         {

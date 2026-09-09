@@ -9,6 +9,11 @@ Never calls save_mentions() -- no DB writes happen. Safe to run repeatedly
 while MENCIONES_COMERCIALES still doesn't exist (DB write access is still
 blocked, see docs/progress.md).
 
+DEBUG (temporary, 2026-09-09): every detected mention also gets its audio cut
+out and saved locally under DEBUG_MENTIONS_DIR (see src/tool2.py), so a
+detection can be listened to directly rather than trusted from the transcript
+alone -- for validating the "spot, not mention" prompt reframing.
+
 Usage: tool2_test.exe [hostnames] [id_testigo_min] [limit] [output_path]
   hostnames      defaults to sara3. Comma-separated for several hosts (e.g.
                   "sara3,sara13"), or "all" to match src/tool2.py's real
@@ -34,6 +39,7 @@ from src.tool2 import (
     TOOL2_TESTIGO_ESTATUS_IDS,
     crop_segment,
     resolve_testigo_path,
+    save_mention_debug_clip,
 )
 
 DEFAULT_HOSTNAMES = ["sara3"]
@@ -108,11 +114,13 @@ def process_segment(segment: dict) -> dict:
 
     try:
         segments = transcribe_timestamped_segments(clip_path)
+        transcript = " ".join(s["text"] for s in segments)
+        mentions = extract_brand_mentions(segments)
+        for mention in mentions:
+            save_mention_debug_clip(clip_path, segment, mention)
     finally:
         os.remove(clip_path)
 
-    transcript = " ".join(s["text"] for s in segments)
-    mentions = extract_brand_mentions(segments)
     return {"transcript": transcript, "mentions": mentions}
 
 
