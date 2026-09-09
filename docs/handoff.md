@@ -163,11 +163,13 @@ Once `client_data/real_audio_db/` existed with real `INICIO`/`DURACION` values, 
 3. **File access scope** — the ~44% of `client_data/wav2` files with no matching DB row: worth asking the client whether that's expected (different environment/date range) or a sign the DB snapshot (`OrbitMedia_Test`) is incomplete relative to the wav set they shared.
 4. **`DURACION` accuracy** — worth flagging to the client that `ALTAS_SARA_FP.DURACION` appears to sometimes undercut real ad length; may be worth asking how it's computed upstream, though it's no longer load-bearing for Tool 1 now that cropping isn't used.
 
-## Current access constraints (as of 2026-08-17)
+## Current access constraints (updated 2026-09-09)
 
-Neither tool has access to the client's **live/production** DB or the actual `SARA<n>` capture machines. Everything built so far runs against `OrbitMedia_Test` (a SQL Server test DB the client set up for this project — see `docs/raw-notes/client-db-messages.md`) plus whatever files the client has separately shared (`client_data/wav2`, etc.). Treat schema/status-code findings from that test DB as reliable for structure, but do not assume the tools can run against real production data yet — that requires access that hasn't landed.
+**Tool 2 is now deployed on SaraAlt with access to the client's real production DB and capture-host shares** — no longer limited to `OrbitMedia_Test`. Tool 1 has not made this jump yet: it still runs against `OrbitMedia_Test` plus whatever files the client has separately shared (`client_data/wav2`, etc.), and its DB read/write loop against `ALTAS_SARA_FP` isn't built. Treat schema/status-code findings originally gathered against the test DB (see `docs/raw-notes/client-db-messages.md`) as reliable for structure, but for Tool 2 the pipeline is now running against real production data end-to-end.
 
 ## Tool 2 — now partially scoped
+
+> **This section is stale** — it predates the file-access, stereo-channel, and production-deployment work documented earlier in this file (2026-09-03 through 2026-09-09). Tool 2 is now deployed on SaraAlt against the client's real production DB with write access confirmed; the "blocked"/"not yet created" notes below describe an earlier state. Kept for history of how the scope was confirmed.
 
 Tool 2 targets `SEGMENTO_SARA` rows discarded (by locutor, noticiero, or song) — not the `ALTAS_SARA_FP` queue Tool 1 uses. Full pipeline detail in the artifact linked above, section 02/05 (note: the artifact predates the confirmations below).
 

@@ -213,26 +213,57 @@ def extract_spot_details(transcript: str) -> dict:
 
 BRAND_MENTION_SYSTEM_PROMPT = """You are helping a media monitoring company scan discarded/oversized audio
 segments from a TV or radio program (song breaks, operator chatter, long unclassified stretches — NOT
-confirmed commercials) for any mention of a brand or advertiser, so a capturista can review whether it's
-worth investigating further.
+confirmed commercials) for **actual embedded advertising** — a real "mini spot" hiding inside content that
+was otherwise discarded as not being a commercial — so a capturista can review whether it's worth
+registering as one.
 
 You will be given a transcript as a numbered list of timestamped segments, e.g.:
 [0] 0.00-2.40: "..."
 [1] 2.40-5.10: "..."
 
-Find every distinct brand/advertiser mention. For each one, report:
+**What you're actually looking for is a spot, not a mention.** The classic shape in a song-discarded
+segment: a song is playing, the music ducks down in volume, a locutor reads a live ad over/under the
+music bed — describing a product/service, giving an offer, an address, a phone number, a promo code, a
+call to action, or similar — and then the song comes back up and continues. That locutor read is a real
+commercial and should be reported even though the segment around it is music. The same principle applies
+to locutor-chatter and newscast-discarded segments too: look for an actual embedded promotional read
+within the surrounding talk, not just a brand name coming up in conversation.
+
+**A brand name simply being said is not enough on its own — do not report a bare mention.** If a song's
+lyrics happen to contain a brand-like word, if a DJ or newscaster merely references a company/product/
+person/party in passing while talking about something else, or if a name shows up with no surrounding
+pitch, offer, or promotional framing, that is not a spot — do not report it. The bar is: would a
+capturista listening to this clip recognize it as "someone is advertising something here," not just "a
+brand name was said." A short spot can still be genuine — a quick "Beadaholique.com, para todas tus
+necesidades de mostacillas" is a real (if brief) ad because it pitches a use case and gives a way to act
+on it; a bare "Nike" dropped mid-sentence with nothing around it is not.
+
+For each real spot found, report:
 - "marca": the brand/product name as said.
 - "anunciante": the company behind it, if identifiable from the mention; otherwise reuse "marca".
 - "start_segment" / "end_segment": the indices (from the numbered list) of the first and last segment the
-  mention spans. Use the same index for both if it's contained in one segment.
+  spot spans (the locutor's read itself, not the surrounding song/chatter it interrupts).
 
-Do not invent mentions. If the transcript is just music, silence, or unrelated chatter with no brand
-mentioned, return an empty list. A brief passing mention still counts.
+Do not invent mentions. If the transcript is just music, silence, unrelated chatter, or brand names
+coming up without any actual advertising/promotional content around them, return an empty list.
+
+**This applies to political parties, candidates, and government programs too** — a genuine paid political
+spot or public-service announcement (with its own promotional pitch/read, same as a commercial) should be
+reported like any other spot. But a party, politician, or program merely being discussed or named on a
+news/opinion show (e.g. pundits debating party alliances, a news segment about a government benefit
+program) is not a spot — that's the same "bare mention" case above and should not be reported.
 
 **Do not report the radio/TV station itself** — its own name, call sign, frequency (e.g. "88.9 FM"),
 slogans, social media handles, or presenter/show names are self-promotion, not a commercial brand or
 advertiser, even if repeated constantly. Only report brands that are distinct from the station running
-the broadcast, i.e. something a real advertiser is paying to promote.
+the broadcast, i.e. something a real advertiser is paying to promote. This still applies when Whisper
+garbles the frequency/station-ID into disconnected or misspelled fragments (e.g. repeated "Digital
+noventa y ocho punto" instead of a clean "Digital 98.5") — recognize a station self-ID for what it is even
+when the transcription of it is broken, and exclude it the same way.
+
+**Do not report song titles, artist/band names, or album names as brand mentions** — a DJ announcing,
+playing, or having listeners vote between songs (e.g. "Backstreet Boys", "Britney Spears") is music
+programming, not a commercial or advertiser, even though these are real, distinct proper names.
 
 **Also do not report other programs, newscasts, or syndicated content brands announced as part of the
 broadcast itself** — e.g. a syndicated newscast's own name ("Noticias Caracol", "El Financiero") said as
@@ -261,6 +292,14 @@ stock phrases like "Subtítulos realizados/creados por la comunidad de Amara.org
 comment, and subscribe", "gracias por ver"), or any string of nonsense/mismatched-language fragments and
 repeated "?" characters. These are transcription noise that shows up on silence, music, or low-confidence
 audio — they are not something anyone actually said in this clip, regardless of how they're phrased.
+
+**Be extra skeptical of any brand-like name that appears in the same transcript as these hallucination
+artifacts** — if the transcript around a candidate mention is full of Amara.org credits, mismatched
+languages, garbled/non-sequitur text, or repeated "?" characters, treat that whole stretch as unreliable.
+Only report a mention from a noisy stretch like this if the surrounding words clearly describe a real
+product/service/offer in coherent Spanish or English — a short, isolated, out-of-place proper noun
+sitting in the middle of hallucinated noise (with no pitch, offer, or business context around it) is
+almost certainly hallucinated too, not a real mention.
 
 Write all output text in Spanish (brand/product names should stay as mentioned in the transcript).
 
