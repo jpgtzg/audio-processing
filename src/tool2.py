@@ -13,6 +13,7 @@ from src.extraction import extract_brand_mentions
 
 TESTIGO_SHARE_TEMPLATE = os.environ.get("TESTIGO_SHARE_TEMPLATE", r"\\{hostname}\sara")
 DEBUG_MENTIONS_DIR = os.environ.get("TOOL2_DEBUG_MENTIONS_DIR", "debug_mentions")
+DEBUG_CONTEXT_PADDING_SECONDS = float(os.environ.get("TOOL2_DEBUG_CONTEXT_PADDING_SECONDS", 10))
 LAST_ID_TESTIGO_FILE = os.environ.get("TOOL2_LAST_ID_TESTIGO_FILE", "tool2_last_id_testigo.txt")
 POLL_INTERVAL_SECONDS = int(os.environ.get("TOOL2_POLL_INTERVAL_SECONDS", 60 * 60))
 ESTATUS_DESCARTADO_LOCUTOR: int = 10
@@ -121,22 +122,53 @@ def crop_segment(testigo_path: str, inicio: float, duracion: float, canal: int) 
     return tmp_path
 
 
-def save_mention_debug_clip(clip_path: str, segment: dict, mention: dict) -> str:
-    """DEBUG (temporary, 2026-09-09): cuts out just the audio spanning a detected
-    mention (mention['start']/['end'], seconds into the already-cropped clip) and
-    saves it to DEBUG_MENTIONS_DIR so it can be listened to directly -- lets us
-    check by ear whether a detection is a real spot or still a bare-mention false
-    positive, while the "spot, not mention" prompt reframing is unvalidated
-    against live data (see docs/progress.md). Remove once that's confirmed."""
+def save_mention_debug_clips(testigo_path: str, segment: dict, mentions: list[dict]) -> None:
+    """DEBUG (temporary, 2026-09-09): for every detected mention, saves both the
+    exact audio span flagged and a padded version with DEBUG_CONTEXT_PADDING_SECONDS
+    of surrounding audio on each side (clamped to the testigo's own bounds) to
+    DEBUG_MENTIONS_DIR -- so a mention can be judged by ear against what's
+    actually happening around it: is the music really ducking down for a
+    locutor's live read (a real spot), or is this just a bare mention with
+    nothing going on around it (not a spot)? See the "spot, not mention" prompt
+    reframing in docs/progress.md, which this is meant to validate by ear.
+
+    Reads directly from the full testigo recording (not the already-cropped
+    clip used for transcription, which is bounded to the segment's own
+    [INICIO, INICIO+DURACION] and may cut off the context we actually want to
+    hear), loading it once per segment rather than once per mention. Remove
+    once the reframing above is confirmed working against live data."""
+    if not mentions:
+        return
+
     os.makedirs(DEBUG_MENTIONS_DIR, exist_ok=True)
-    audio = AudioSegment.from_file(clip_path)
-    start_ms = int(mention["start"] * 1000)
-    end_ms = int(mention["end"] * 1000)
-    marca = re.sub(r"[^A-Za-z0-9_-]+", "_", str(mention.get("marca") or "mention")).strip("_")[:50]
-    filename = f"{segment['ID_SEGMENTO']}_{marca or 'mention'}_{start_ms}-{end_ms}ms.wav"
-    out_path = os.path.join(DEBUG_MENTIONS_DIR, filename)
-    audio[start_ms:end_ms].export(out_path, format="wav")
-    return out_path
+    audio = AudioSegment.from_file(testigo_path)
+    canal = segment["CANAL"]
+    if audio.channels >= 2:
+        if canal not in (1, 2):
+            raise ValueError(f"CANAL must be 1 or 2 to pick a channel, got {canal!r}")
+        audio = audio.split_to_mono()[canal - 1]
+
+    segment_start_ms = int(segment["INICIO"] * 1000)
+    pad_ms = int(DEBUG_CONTEXT_PADDING_SECONDS * 1000)
+
+    for mention in mentions:
+        mention_start_ms = segment_start_ms + int(mention["start"] * 1000)
+        mention_end_ms = segment_start_ms + int(mention["end"] * 1000)
+        marca = (
+            re.sub(r"[^A-Za-z0-9_-]+", "_", str(mention.get("marca") or "mention")).strip("_")[:50]
+            or "mention"
+        )
+        base = f"{segment['ID_SEGMENTO']}_{marca}_{int(mention['start'] * 1000)}-{int(mention['end'] * 1000)}ms"
+
+        audio[mention_start_ms:mention_end_ms].export(
+            os.path.join(DEBUG_MENTIONS_DIR, f"{base}.wav"), format="wav"
+        )
+
+        context_start_ms = max(0, mention_start_ms - pad_ms)
+        context_end_ms = min(len(audio), mention_end_ms + pad_ms)
+        audio[context_start_ms:context_end_ms].export(
+            os.path.join(DEBUG_MENTIONS_DIR, f"{base}_context.wav"), format="wav"
+        )
 
 
 def process(segment: dict) -> list[dict]:
@@ -154,8 +186,7 @@ def process(segment: dict) -> list[dict]:
         segments = transcribe_timestamped_segments(clip_path)
         full_transcript = " ".join(s["text"] for s in segments)
         mentions = extract_brand_mentions(segments)
-        for mention in mentions:
-            save_mention_debug_clip(clip_path, segment, mention)
+        save_mention_debug_clips(testigo_path, segment, mentions)
     finally:
         os.remove(clip_path)
 
