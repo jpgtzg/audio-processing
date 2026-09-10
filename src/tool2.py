@@ -123,20 +123,23 @@ def crop_segment(testigo_path: str, inicio: float, duracion: float, canal: int) 
 
 
 def save_mention_debug_clips(testigo_path: str, segment: dict, mentions: list[dict]) -> None:
-    """DEBUG (temporary, 2026-09-09): for every detected mention, saves both the
-    exact audio span flagged and a padded version with DEBUG_CONTEXT_PADDING_SECONDS
-    of surrounding audio on each side (clamped to the testigo's own bounds) to
-    DEBUG_MENTIONS_DIR -- so a mention can be judged by ear against what's
-    actually happening around it: is the music really ducking down for a
-    locutor's live read (a real spot), or is this just a bare mention with
-    nothing going on around it (not a spot)? See the "spot, not mention" prompt
-    reframing in docs/progress.md, which this is meant to validate by ear.
+    """DEBUG (temporary, 2026-09-09): for a segment with at least one detected
+    mention, saves to DEBUG_MENTIONS_DIR (a) the exact audio span flagged for
+    each individual mention, and (b) one shared context clip covering the
+    *whole discarded segment* ([INICIO, INICIO+DURACION]) padded with
+    DEBUG_CONTEXT_PADDING_SECONDS on each side (clamped to the testigo's own
+    bounds) -- not just padding around the narrow mention span -- so it can be
+    judged by ear against what's actually happening around it: is the music
+    really ducking down for a locutor's live read somewhere in this segment (a
+    real spot), or is this just a bare mention with nothing going on around it
+    (not a spot)? See the "spot, not mention" prompt reframing in
+    docs/progress.md, which this is meant to validate by ear.
 
     Reads directly from the full testigo recording (not the already-cropped
-    clip used for transcription, which is bounded to the segment's own
-    [INICIO, INICIO+DURACION] and may cut off the context we actually want to
-    hear), loading it once per segment rather than once per mention. Remove
-    once the reframing above is confirmed working against live data."""
+    clip used for transcription, which is bounded to the segment's own window
+    and can't provide context beyond it), loading it once per segment rather
+    than once per mention. Remove once the reframing above is confirmed
+    working against live data."""
     if not mentions:
         return
 
@@ -149,7 +152,14 @@ def save_mention_debug_clips(testigo_path: str, segment: dict, mentions: list[di
         audio = audio.split_to_mono()[canal - 1]
 
     segment_start_ms = int(segment["INICIO"] * 1000)
+    segment_end_ms = segment_start_ms + int(segment["DURACION"] * 1000)
     pad_ms = int(DEBUG_CONTEXT_PADDING_SECONDS * 1000)
+
+    context_start_ms = max(0, segment_start_ms - pad_ms)
+    context_end_ms = min(len(audio), segment_end_ms + pad_ms)
+    audio[context_start_ms:context_end_ms].export(
+        os.path.join(DEBUG_MENTIONS_DIR, f"{segment['ID_SEGMENTO']}_context.wav"), format="wav"
+    )
 
     for mention in mentions:
         mention_start_ms = segment_start_ms + int(mention["start"] * 1000)
@@ -162,12 +172,6 @@ def save_mention_debug_clips(testigo_path: str, segment: dict, mentions: list[di
 
         audio[mention_start_ms:mention_end_ms].export(
             os.path.join(DEBUG_MENTIONS_DIR, f"{base}.wav"), format="wav"
-        )
-
-        context_start_ms = max(0, mention_start_ms - pad_ms)
-        context_end_ms = min(len(audio), mention_end_ms + pad_ms)
-        audio[context_start_ms:context_end_ms].export(
-            os.path.join(DEBUG_MENTIONS_DIR, f"{base}_context.wav"), format="wav"
         )
 
 
