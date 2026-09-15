@@ -8,7 +8,9 @@ Status tracker: what's done, what's blocked, what's left before either tool can 
 
 **Tool 2 is now deployed and live (2026-09-09)**: running on **SaraAlt** with access to the client's real production DB (not just `OrbitMedia_Test`), resolving the `SARA3` staleness/file-freshness blocker below — production data doesn't have the test-snapshot lag that caused those `FileNotFoundError`s.
 
-Last updated: 2026-09-09.
+**Tool 2: practically done (2026-09-10)** — running live against real production DB/audio, and manually verified by ear against the saved debug audio (exact mention + whole-segment context clips): detections are landing on real embedded spots, not bare mentions, matching the "spot, not mention" reframing's intent. Remaining work is essentially responding to whatever minor adjustments the client asks for after reviewing more output (see "Not yet built"/"Suggested next asks" below), not open engineering problems. Tool 1 is the one with real remaining build work (DB read/write loop, dedup logic) — see below.
+
+Last updated: 2026-09-10.
 
 ## Tool 1 — new-commercial detection
 
@@ -31,7 +33,7 @@ Last updated: 2026-09-09.
 ### Worth confirming with the client
 - The `= 2` input status is a strong inference from the already-confirmed status lifecycle (matches "not identified via FP" almost exactly) but hasn't been literally stated as the number "2" — worth a quick sanity check before wiring it into code that writes to their DB.
 
-## Tool 2 — brand-mention detection in discarded segments — **priority for deployment**
+## Tool 2 — brand-mention detection in discarded segments — **practically done, minor client-driven changes only**
 
 Was deferred at project start ("revisit after Tool 1 ships"); work began 2026-08-17, same day as this doc. Client has since asked to prioritize this one first.
 
@@ -63,11 +65,13 @@ Was deferred at project start ("revisit after Tool 1 ships"); work began 2026-08
 - **`MOTIVO_DESCARTE` column added to `MENCIONES_COMERCIALES` (2026-09-05, client-requested)**: human-readable discard reason (`LOCUTOR`/`NOTICIERO`/`CANCION`), populated automatically by `save_mentions()` so it's readable without joining back to `SEGMENTO_SARA`/`CAT_ESTATUS_SEGMENTO`. Migration in `scripts/create_mentions_table.py` handles both a fresh table and one that predates this column.
 - **`ANUNCIANTE`/`MARCA` now resolved to catalog IDs, `TRANSCRIPCION` now a snippet (2026-09-08, client-requested)**: `NUM_ANUNC`/`NUM_MARCA` columns added, fuzzy-matched (new `rapidfuzz` dependency) against the live `ANUNCIANTES` (15,079 rows) / `MARCAS` (581 rows) catalogs via `match_anunciante()`/`match_marca()` in `src/extraction.py`; raw detected text stays in `ANUNCIANTE`/`MARCA` for cases with no confident match (expected — plenty of real advertisers won't be in the catalog) so nothing is lost for manual linking. `TRANSCRIPCION` now stores only the sentence(s) spanning the mention itself; a follow-up ask added `TRANSCRIPCION_COMPLETA` to keep the entire clip's transcript alongside it rather than dropping it. See `docs/handoff.md` for the rapidfuzz scorer pitfalls this hit (case-sensitivity, `WRatio` being too permissive at 15k rows, plain `ratio` being too strict against `MARCAS`' "GRUPO X" naming convention) and how they were resolved. **Not yet re-validated against a real live segment** — OpenAI API quota ran out on the local dev key mid-session; matching logic and the transcript-snippet logic were both verified directly (fuzzy-matching against live catalog rows, a mocked-LLM-response test), but not through an actual `tool2_test.exe` run. A `TITULO`-related item was also raised by the client but deferred for later discussion — not addressed yet.
 
-### Not yet built
-- **Segment-offset units** — `crop_segment()` assumes `SEGMENTO_SARA.INICIO`/`DURACION` are seconds (distinct from `ALTAS_SARA_FP`'s millisecond convention); not yet confirmed by ear the way Tool 1's units were.
-- **Windowing for Tool 2's transcription path** — `transcribe_timestamped_segments()` (Tool 2) doesn't have the windowing/fuzzy-stitch fix `transcribe_full_text()` (Tool 1) has for long unwindowed clips; proposed but not implemented, and possibly moot now that the stereo-channel fix has cleaned up transcript quality significantly.
-- Whether Tool 1's `client_data/wav2` clips (pre-cropped by SARA's own pipeline, not read directly from a raw testigo file by our code) could carry the same dual-emission problem is unconfirmed — worth asking the client before Tool 1's DB-driven file loop is built.
+### Remaining loose ends (minor, none blocking — Tool 2 is otherwise done)
+- **Segment-offset units** — `crop_segment()` assumes `SEGMENTO_SARA.INICIO`/`DURACION` are seconds (distinct from `ALTAS_SARA_FP`'s millisecond convention); not yet confirmed by ear the way Tool 1's units were. The 2026-09-10 by-ear validation of real detections is indirect evidence this is correct (cropped audio lines up with what the transcript/mentions describe), but it hasn't been checked as its own explicit item.
+- **Windowing for Tool 2's transcription path** — `transcribe_timestamped_segments()` (Tool 2) doesn't have the windowing/fuzzy-stitch fix `transcribe_full_text()` (Tool 1) has for long unwindowed clips; proposed but not implemented, and appears moot now that the stereo-channel fix plus the 2026-09-10 by-ear validation both show clean transcript quality without it.
+- Whether Tool 1's `client_data/wav2` clips (pre-cropped by SARA's own pipeline, not read directly from a raw testigo file by our code) could carry the same dual-emission problem is unconfirmed — a Tool 1 question, not Tool 2's — worth asking the client before Tool 1's DB-driven file loop is built.
 - The deferred `TITULO` item the client flagged (2026-09-08) — no detail yet, follow up with them.
+- The `MOTIVO_DESCARTE = CANCION` proportion question above — a client question, not a code fix.
+- Debug audio-clip tooling (`save_mention_debug_clips()`) is still temporary/wired in — remove once the client no longer needs to spot-check detections by ear.
 
 ### DB write access — resolved (2026-09-03), then wiped and re-resolved (2026-09-05)
 Client confirmed write access is now granted. Verified directly (not just re-tried the old blocked path): `MENCIONES_COMERCIALES` already exists live in `OrbitMedia_Test` with exactly the designed schema (`scripts/create_mentions_table.py` reported "already exists, skipping" — someone, likely the client, created it since the client granted access). Ran `save_mentions()` with a throwaway test row (`ID_SEGMENTO=-1`) — insert succeeded with all fields (`TITULO`/`ANUNCIANTE`/`MARCA`/mention timestamps/transcript/default `ID_ESTATUS_VALIDACION=1`) landing correctly, then deleted it.
@@ -95,6 +99,14 @@ First live run on SaraAlt against production hit `run failed, will retry next cy
 **Real bug found and fixed regardless of that root cause**: `main()`'s per-segment loop only caught `FileNotFoundError`; this different `OSError` propagated all the way out of `main()` itself, aborting the *entire* run on this one segment. Because `write_last_id_testigo()` only runs after the loop finishes, the saved position never advanced — every subsequent hourly cycle would fetch the same segment first and hit the exact same error again, forever, stuck on this one file. Fixed in `src/tool2.py`: added a catch-all `except Exception` alongside the `FileNotFoundError` case, so any single segment's failure is logged and skipped rather than stalling the whole service.
 
 **Debug tooling added the same session, extended with surrounding context**: `save_mention_debug_clips()` (`src/tool2.py`, wired into both `process()` and `scripts/tool2_test.py`) saves, per segment with at least one detected mention, the exact flagged audio span for each mention plus one shared context clip covering the *whole discarded segment* (`[INICIO, INICIO+DURACION]`, not just the narrow mention span) padded with `DEBUG_CONTEXT_PADDING_SECONDS` (default 10s) on each side. Reads directly from the full testigo recording rather than the already-narrow discarded-segment clip, so the padding isn't cut short by the segment's own boundaries. The point: the tight clip alone can't show whether a song genuinely ducks down for a locutor's live ad read somewhere in the segment (a real spot) versus a brand name just passing by mid-song with nothing else going on (not a spot) — the context clip lets that be judged by ear. Temporary, meant to be removed once the "spot, not mention" reframing above is confirmed working against live data.
+<<<<<<< HEAD
+=======
+
+### "Spot, not mention" reframing confirmed working by ear (2026-09-10)
+Ran live on SaraAlt against real production DB/audio with the crash-loop fix and debug audio clips (exact mention span + whole-segment context) in place. Listened to a batch of detections directly: the reframed prompt is correctly landing on real embedded spots (locutor reads over a ducked-down song, etc.), not bare mentions — confirms the 2026-09-09 prompt rewrite is working as intended, not just passing code review. Tool 2's core detection logic is considered **practically done** as of this session; anything further is expected to be minor, client-requested tuning (e.g. a specific missed/over-eager pattern the client flags after reviewing more live output), not a new architectural problem.
+
+Separately noted while reviewing live output: a high proportion of segments carry `MOTIVO_DESCARTE = CANCION`. Confirmed this is not a Tool 2 bug — `MOTIVO_DESCARTE` is a straight passthrough of `SEGMENTO_SARA.ID_ESTATUS_SEGMENTO`, set entirely upstream by SARA before Tool 2 ever queries the row (`fetch_discarded_segments()`); Tool 2 has no logic that assigns or influences this value. Whether the proportion itself is expected (music-heavy stations naturally produce more song-discards than locutor/newscast discards) or a sign SARA's own classifier is misfiring is a question for the client, not something to debug in this codebase — the whole-segment context clips above are exactly the tool for checking this by ear.
+>>>>>>> dae33f1 (formatting: fixed formatting)
 
 ## Cross-cutting blockers (both tools)
 

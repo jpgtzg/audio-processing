@@ -5,7 +5,8 @@ from functools import lru_cache
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from rapidfuzz import fuzz, process as fuzzy_process
+from rapidfuzz import fuzz
+from rapidfuzz import process as fuzzy_process
 from sqlalchemy import text
 
 from src.db.db import engine
@@ -36,9 +37,11 @@ def get_categorias() -> list[str]:
     which is what COMERCIALES.CVE_SUB3 (and this extraction's "categoria" field)
     actually hangs off. Cached per-process since the taxonomy changes rarely."""
     with engine.connect() as conn:
-        rows = conn.execute(
-            text("SELECT TIT_SUB3 FROM SUBCAT3 ORDER BY TIT_SUB3")
-        ).scalars().all()
+        rows = (
+            conn.execute(text("SELECT TIT_SUB3 FROM SUBCAT3 ORDER BY TIT_SUB3"))
+            .scalars()
+            .all()
+        )
     return list(rows)
 
 
@@ -49,9 +52,13 @@ def get_anunciantes() -> list[dict]:
     (match_anunciante()) instead. Cached per-process; the catalog changes rarely
     relative to a single run."""
     with engine.connect() as conn:
-        rows = conn.execute(
-            text("SELECT NUM_ANUNC, TIT_ANUNC, ABREV_ANUNC FROM ANUNCIANTES")
-        ).mappings().all()
+        rows = (
+            conn.execute(
+                text("SELECT NUM_ANUNC, TIT_ANUNC, ABREV_ANUNC FROM ANUNCIANTES")
+            )
+            .mappings()
+            .all()
+        )
     return [dict(row) for row in rows]
 
 
@@ -60,9 +67,11 @@ def get_marcas() -> list[dict]:
     """MARCAS catalog -- small enough (581 rows) to fuzzy-match directly, same
     approach as get_anunciantes(). Cached per-process."""
     with engine.connect() as conn:
-        rows = conn.execute(
-            text("SELECT NUM_MARCA, TIT_MARCA FROM MARCAS")
-        ).mappings().all()
+        rows = (
+            conn.execute(text("SELECT NUM_MARCA, TIT_MARCA FROM MARCAS"))
+            .mappings()
+            .all()
+        )
     return [dict(row) for row in rows]
 
 
@@ -85,8 +94,12 @@ def match_anunciante(detected: str | None) -> tuple[int | None, float | None]:
         return None, None
 
     anunciantes = get_anunciantes()
-    tit_candidates = {r["NUM_ANUNC"]: r["TIT_ANUNC"] for r in anunciantes if r["TIT_ANUNC"]}
-    abrev_candidates = {r["NUM_ANUNC"]: r["ABREV_ANUNC"] for r in anunciantes if r["ABREV_ANUNC"]}
+    tit_candidates = {
+        r["NUM_ANUNC"]: r["TIT_ANUNC"] for r in anunciantes if r["TIT_ANUNC"]
+    }
+    abrev_candidates = {
+        r["NUM_ANUNC"]: r["ABREV_ANUNC"] for r in anunciantes if r["ABREV_ANUNC"]
+    }
 
     best = None
     for candidates in (tit_candidates, abrev_candidates):
@@ -172,6 +185,7 @@ Respond with JSON only, matching this shape:
 {{"categoria": "...", "anunciante": "...", "marca": "...", "marca_corto": "...", "version": "...",
 "vigencia": "...", "keywords": ["..."]}}
 """
+
 
 _EMPTY_RESULT = {
     "categoria": None,
@@ -321,7 +335,7 @@ def extract_brand_mentions(segments: list[dict]) -> list[dict]:
         return []
 
     numbered = "\n".join(
-        f"[{i}] {s['start']:.2f}-{s['end']:.2f}: \"{s['text']}\""
+        f'[{i}] {s["start"]:.2f}-{s["end"]:.2f}: "{s["text"]}"'
         for i, s in enumerate(segments)
     )
 
