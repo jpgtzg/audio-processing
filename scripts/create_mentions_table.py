@@ -7,11 +7,13 @@ snapshot restore, may predate a given column).
 Columns:
     ID_MENCION            identity PK
     ID_SEGMENTO/ID_TESTIGO source SEGMENTO_SARA row this mention came from
-    ID_ESTATUS_SEGMENTO   which discard reason triggered detection (locutor/
-                           noticiero/cancion -- see src/tool2.py TOOL2_ESTATUS_IDS)
-    MOTIVO_DESCARTE        human-readable version of ID_ESTATUS_SEGMENTO
-                           ("LOCUTOR"/"NOTICIERO"/"CANCION") so this is readable
-                           without joining back to a catalog table
+    ID_ESTATUS_SEGMENTO   which discard reason triggered detection -- see
+                           src/tool2.py TOOL2_ESTATUS_IDS (10 codes as of
+                           2026-09-17, client-expanded from the original 3)
+    MOTIVO_DESCARTE        human-readable version of ID_ESTATUS_SEGMENTO,
+                           pulled live from CAT_ESTATUS_SEGMENTO.DESCRIPCION
+                           (see src/tool2.py get_motivo_descarte_labels()) so
+                           this is readable without joining back to the catalog
     TITULO                 currently reuses MARCA (see src/tool2.py save_mentions())
     ANUNCIANTE/MARCA       raw text Whisper extraction detected -- kept even when
                            NUM_ANUNC/NUM_MARCA below has no confident match, so a

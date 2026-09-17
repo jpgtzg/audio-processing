@@ -3,6 +3,7 @@ import re
 import sys
 import tempfile
 import time
+from functools import lru_cache
 
 from pydub import AudioSegment
 from sqlalchemy import bindparam, text
@@ -11,7 +12,6 @@ from src.audio import transcribe_timestamped_segments
 from src.db.db import engine
 from src.extraction import extract_brand_mentions
 
-TESTIGO_SHARE_TEMPLATE = os.environ.get("TESTIGO_SHARE_TEMPLATE", r"\\{hostname}\sara")
 DEBUG_MENTIONS_DIR = os.environ.get("TOOL2_DEBUG_MENTIONS_DIR", "debug_mentions")
 DEBUG_CONTEXT_PADDING_SECONDS = float(os.environ.get("TOOL2_DEBUG_CONTEXT_PADDING_SECONDS", 10))
 LAST_ID_TESTIGO_FILE = os.environ.get("TOOL2_LAST_ID_TESTIGO_FILE", "tool2_last_id_testigo.txt")
@@ -19,22 +19,52 @@ POLL_INTERVAL_SECONDS = int(os.environ.get("TOOL2_POLL_INTERVAL_SECONDS", 60 * 6
 ESTATUS_DESCARTADO_LOCUTOR: int = 10
 ESTATUS_DESCARTADO_NOTICIERO: int = 11
 ESTATUS_DESCARTADO_CANCION: int = 12
+ESTATUS_DESCARTADO_INCONSISTENCIA: int = 13
+ESTATUS_DESCARTADO_DURACION_MINIMA: int = 14
+ESTATUS_DESCARTADO_GENERICO: int = 15
+ESTATUS_DESCARTADO_AUDITORIA: int = 16
+ESTATUS_DESCARTADO_NAC: int = 17
+ESTATUS_DESCARTADO_ALTAS_AUTOMATICAS: int = 18
+ESTATUS_DESCARTADO_REGLA: int = 21
 TOOL2_ESTATUS_IDS: list[int] = [
     ESTATUS_DESCARTADO_LOCUTOR,
     ESTATUS_DESCARTADO_NOTICIERO,
     ESTATUS_DESCARTADO_CANCION,
+    ESTATUS_DESCARTADO_INCONSISTENCIA,
+    ESTATUS_DESCARTADO_DURACION_MINIMA,
+    ESTATUS_DESCARTADO_GENERICO,
+    ESTATUS_DESCARTADO_AUDITORIA,
+    ESTATUS_DESCARTADO_NAC,
+    ESTATUS_DESCARTADO_ALTAS_AUTOMATICAS,
+    ESTATUS_DESCARTADO_REGLA,
 ]
-MOTIVO_DESCARTE_LABELS: dict[int, str] = {
-    ESTATUS_DESCARTADO_LOCUTOR: "LOCUTOR",
-    ESTATUS_DESCARTADO_NOTICIERO: "NOTICIERO",
-    ESTATUS_DESCARTADO_CANCION: "CANCION",
-}
 
-TESTIGO_ESTATUS_PROCESADO_CON_BLANK: int = 3
-TESTIGO_ESTATUS_REPROCESO: int = 5
+
+@lru_cache(maxsize=1)
+def get_motivo_descarte_labels() -> dict[int, str]:
+    """Live-pulled MOTIVO_DESCARTE label for every code in TOOL2_ESTATUS_IDS,
+    sourced from CAT_ESTATUS_SEGMENTO.DESCRIPCION rather than a hand-maintained
+    dict -- client added 7 more discard codes on top of the original 3
+    (2026-09-17), and hardcoding a label per code risked silently drifting
+    from the catalog as more get added later. Cached per-process since the
+    catalog changes rarely, same pattern as get_categorias() in
+    src/extraction.py."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT ID_ESTATUS_SEGMENTO, DESCRIPCION FROM CAT_ESTATUS_SEGMENTO "
+                "WHERE ID_ESTATUS_SEGMENTO IN :ids"
+            ).bindparams(bindparam("ids", expanding=True)),
+            {"ids": TOOL2_ESTATUS_IDS},
+        ).all()
+    return {row.ID_ESTATUS_SEGMENTO: row.DESCRIPCION for row in rows}
+
+
+TESTIGO_ESTATUS_TERMINADO: int = 10
+TESTIGO_ESTATUS_BORRADO: int = 20
 TOOL2_TESTIGO_ESTATUS_IDS: list[int] = [
-    TESTIGO_ESTATUS_PROCESADO_CON_BLANK,
-    TESTIGO_ESTATUS_REPROCESO,
+    TESTIGO_ESTATUS_TERMINADO,
+    TESTIGO_ESTATUS_BORRADO,
 ]
 
 
@@ -44,26 +74,65 @@ def fetch_discarded_segments(
     id_testigo_min: int | None = None,
 ) -> list[dict]:
     """SEGMENTO_SARA rows discarded for one of the given ID_ESTATUS_SEGMENTO
-    reasons, joined against TESTIGO_SARA for HOSTNAME/ARCHIVO so each row is
-    enough to locate and crop the actual clip (see resolve_testigo_path()).
+    reasons, joined to resolve a playable clip's path (RUTA) and channel
+    (CANAL) directly -- no separate resolve_testigo_path() step needed
+    anymore, see below.
 
-    Also requires the parent testigo's own ID_ESTATUS_TESTIGO to be one of
-    testigo_estatus_ids -- client-requested (2026-09-05) restriction to
-    "Procesado con Blank" (3) / "Reproceso" (5) testigos, since those are the
-    ones SARA itself considers finished processing and therefore actually
-    still present on the live share; other testigo statuses were turning up
-    as FileNotFoundError (see docs/handoff.md).
+    Client-requested rework (2026-09-17): two changes that turned out not to
+    be separable.
+
+    1. Scope is now opt-in per station, via EMISORAS_MENCION.MENCIONES=1,
+       active only from that station's own EMISORAS_MENCION.FECHA_MENCION
+       control date -- lets the client pilot this on one station (e.g.
+       XHLUPE) before rolling out wider, instead of running against every
+       station.
+    2. The source file is no longer the live \\sara<n>\\sara\\mp3 share
+       (gated on ID_ESTATUS_TESTIGO IN (3,5), "Procesado con Blank"/
+       "Reproceso") -- it's wherever SARA's own backup pipeline archived the
+       testigo to (e.g. \\Dbackup04\\backup\\...), for testigos with
+       ID_ESTATUS_TESTIGO IN (10,20), "Terminado"/"Borrado".
+
+    These two changes are bundled here because they're not actually
+    independent: TESTIGO_SARA.ID_MULTIMEDIA_ARCHIVO (the backup link) is NULL
+    for the vast majority of *all* testigos regardless of status (~99.9% of
+    status-10, ~88% of status-20, checked directly against OrbitMedia_Test)
+    -- the backup/archive pipeline appears to only cover stations opted into
+    mention detection, so the EMISORAS_MENCION join isn't an optional
+    narrowing, it's load-bearing for the new file-source query to find
+    anything at all.
+
+    MULTIMEDIA has two rows per MULTIMEDIA_ARCHIVO (one per CANAL) with an
+    identical RUTA/ARCHIVO/HOST -- the archived file is still the same
+    stereo dual-emission recording, just relocated, so `mm.CANAL = 1` below
+    just picks one of the two identical rows to avoid doubling every
+    segment. The returned TESTIGO_SARA.CANAL (unaffected by this change) is
+    what actually tells crop_segment()/save_mention_debug_clips() which
+    channel to isolate from the audio.
+
+    The RUTA column is built with the exact same string concatenation as the
+    client's own verified SQL, not reassembled from parts in Python -- this
+    sidesteps a repeat of the earlier double-"mp3"-segment path bug (see
+    docs/handoff.md), since the path string is never touched on the Python
+    side.
 
     SEGMENTO_SARA is 100M+ rows (12M+ for song-discard alone) -- always pass
     id_testigo_min (or add another bound) rather than pulling the whole table."""
     query = text(
-        """
+        r"""
         SELECT s.ID_SEGMENTO, s.ID_TESTIGO, s.ID_ESTATUS_SEGMENTO, s.INICIO, s.DURACION,
-               t.HOSTNAME, t.ARCHIVO, t.CANAL
+               t.CANAL,
+               '\\' + ho.NOM_HOST + '\' + mm.RUTA + '\' + mm.ARCHIVO AS RUTA
         FROM SEGMENTO_SARA s
         JOIN TESTIGO_SARA t ON s.ID_TESTIGO = t.ID_TESTIGO
+        JOIN EMISORAS_MENCION ee ON ee.ID_EMISORA = t.ID_EMISORA
+        JOIN MULTIMEDIA_ARCHIVO mua ON t.ID_MULTIMEDIA_ARCHIVO = mua.ID_MULTIMEDIA_ARCHIVO
+        JOIN MULTIMEDIA mm ON mm.ID_MULTIMEDIA_ARCHIVO = mua.ID_MULTIMEDIA_ARCHIVO AND mm.CANAL = 1
+        JOIN HOST ho ON mm.ID_HOST = ho.ID_HOST
         WHERE s.ID_ESTATUS_SEGMENTO IN :estatus_ids
           AND t.ID_ESTATUS_TESTIGO IN :testigo_estatus_ids
+          AND ee.MENCIONES = 1
+          AND ee.FECHA_MENCION IS NOT NULL
+          AND ee.FECHA_MENCION <= t.FECHA_INICIO
           AND (:id_testigo_min IS NULL OR s.ID_TESTIGO >= :id_testigo_min)
         """
     ).bindparams(
@@ -85,13 +154,6 @@ def fetch_discarded_segments(
             .all()
         )
     return [dict(row) for row in rows]
-
-
-def resolve_testigo_path(hostname: str, archivo: str) -> str:
-    """Builds the UNC path to a TESTIGO_SARA recording from its capture host and
-    filename, e.g. \\sara3\\sara\\mp3\\<ARCHIVO>. See TESTIGO_SHARE_TEMPLATE above."""
-    share_dir = TESTIGO_SHARE_TEMPLATE.format(hostname=hostname.lower())
-    return os.path.join(share_dir, archivo)
 
 
 def crop_segment(testigo_path: str, inicio: float, duracion: float, canal: int) -> str:
@@ -181,16 +243,15 @@ def process(segment: dict) -> list[dict]:
     (a clip can contain zero, one, or several), each carrying the source
     id_segmento/id_testigo/id_estatus_segmento so it can be traced back and
     saved via save_mentions()."""
-    testigo_path = resolve_testigo_path(segment["HOSTNAME"], segment["ARCHIVO"])
     clip_path = crop_segment(
-        testigo_path, segment["INICIO"], segment["DURACION"], segment["CANAL"]
+        segment["RUTA"], segment["INICIO"], segment["DURACION"], segment["CANAL"]
     )
 
     try:
         segments = transcribe_timestamped_segments(clip_path)
         full_transcript = " ".join(s["text"] for s in segments)
         mentions = extract_brand_mentions(segments)
-        save_mention_debug_clips(testigo_path, segment, mentions)
+        save_mention_debug_clips(segment["RUTA"], segment, mentions)
     finally:
         os.remove(clip_path)
 
@@ -199,7 +260,7 @@ def process(segment: dict) -> list[dict]:
             "id_segmento": segment["ID_SEGMENTO"],
             "id_testigo": segment["ID_TESTIGO"],
             "id_estatus_segmento": segment["ID_ESTATUS_SEGMENTO"],
-            "motivo_descarte": MOTIVO_DESCARTE_LABELS.get(segment["ID_ESTATUS_SEGMENTO"]),
+            "motivo_descarte": get_motivo_descarte_labels().get(segment["ID_ESTATUS_SEGMENTO"]),
             "full_transcript": full_transcript,
             **mention,
         }
@@ -253,7 +314,7 @@ def save_mentions(mentions: list[dict]) -> None:
                     "id_testigo": m["id_testigo"],
                     "id_estatus_segmento": m["id_estatus_segmento"],
                     "motivo_descarte": m.get("motivo_descarte")
-                    or MOTIVO_DESCARTE_LABELS.get(m["id_estatus_segmento"]),
+                    or get_motivo_descarte_labels().get(m["id_estatus_segmento"]),
                     "titulo": m.get("marca"),
                     "anunciante": m.get("anunciante"),
                     "marca": m.get("marca"),

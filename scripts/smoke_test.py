@@ -1,20 +1,25 @@
 """Standalone connectivity check for running Tool 2 on SaraAlt.
 
 Checks two things independently, since either one can be broken without the
-other: (1) the OrbitMedia_Test DB is reachable with the credentials in .env,
-and (2) the SARA3 network share (\\sara3\\sara, and its MP3 subfolder where
-ARCHIVO values actually point) is reachable and has files in it. Meant to be
-run as smoke_test.exe on SaraAlt before relying on Tool 2's real pipeline --
-see docs/handoff.md "File access" section.
+other: (1) the DB is reachable with the credentials in .env, and (2) at least
+one EMISORAS_MENCION-opted-in testigo's backup share (e.g.
+\\Dbackup04\\backup\\...) is reachable. Meant to be run as smoke_test.exe on
+SaraAlt before relying on Tool 2's real pipeline -- see docs/handoff.md
+"File access" section.
 
-Usage: smoke_test.exe [hostname]   (hostname defaults to sara3)
+Updated 2026-09-17: this used to check the live \\sara<n>\\sara\\mp3 share
+directly; that share is retired for Tool 2's real pipeline (see
+src/tool2.py's fetch_discarded_segments() docstring) -- files now come from
+wherever SARA's own backup pipeline archived the testigo to, which isn't a
+fixed template anymore, so this resolves one real sample path from the DB
+itself instead of guessing a share root.
+
+Usage: smoke_test.exe [station]   (station defaults to matching any opted-in
+                                   station; pass a callsign substring, e.g.
+                                   "XHLUPE", to check a specific pilot station)
 """
 
 import sys
-
-from src.tool2 import TESTIGO_SHARE_TEMPLATE
-
-DEFAULT_HOSTNAME = "sara3"
 
 
 def test_db() -> tuple[bool, str]:
@@ -33,53 +38,74 @@ def test_db() -> tuple[bool, str]:
         return False, f"FAILED -- {e}"
 
 
-def test_share(hostname: str) -> tuple[bool, str]:
-    """Checks both the share root (what resolve_testigo_path() actually joins
-    ARCHIVO onto) and its MP3 subfolder (where TESTIGO_SARA.ARCHIVO values
-    for SARA3 have been observed to point, e.g. "MP3\\XHRED-...MP3") -- the
-    subfolder check is what actually matters for real segment resolution."""
+def find_sample_backup_path(station: str | None) -> str | None:
+    """Resolves one real backup-storage path via the same join
+    fetch_discarded_segments() uses, for the most recent EMISORAS_MENCION
+    -opted-in testigo (optionally narrowed to one station's callsign) --
+    doesn't require a discarded segment to exist, just a backed-up testigo,
+    so this can pass even before any segment has been through Tool 2's real
+    query."""
     import os
 
-    share_root = TESTIGO_SHARE_TEMPLATE.format(hostname=hostname.lower())
-    mp3_dir = os.path.join(share_root, "MP3")
+    from sqlalchemy import text
 
-    if not os.path.isdir(share_root):
-        return False, f"FAILED -- {share_root} is not reachable/does not exist"
+    from src.db.db import engine
 
-    try:
-        root_entries = os.listdir(share_root)
-    except Exception as e:
-        return False, f"FAILED -- {share_root} -- {e}"
+    station_filter = "1 = 1" if station is None else "t.ARCHIVO LIKE :station"
+    query = text(
+        rf"""
+        SELECT TOP 1 '\\' + ho.NOM_HOST + '\' + mm.RUTA + '\' + mm.ARCHIVO AS RUTA
+        FROM TESTIGO_SARA t
+        JOIN EMISORAS_MENCION ee ON ee.ID_EMISORA = t.ID_EMISORA
+        JOIN MULTIMEDIA_ARCHIVO mua ON t.ID_MULTIMEDIA_ARCHIVO = mua.ID_MULTIMEDIA_ARCHIVO
+        JOIN MULTIMEDIA mm ON mm.ID_MULTIMEDIA_ARCHIVO = mua.ID_MULTIMEDIA_ARCHIVO AND mm.CANAL = 1
+        JOIN HOST ho ON mm.ID_HOST = ho.ID_HOST
+        WHERE ee.MENCIONES = 1
+          AND ee.FECHA_MENCION IS NOT NULL
+          AND ee.FECHA_MENCION <= t.FECHA_INICIO
+          AND t.ID_ESTATUS_TESTIGO IN (10, 20)
+          AND {station_filter}
+        ORDER BY t.ID_TESTIGO DESC
+        """
+    )
+    params = {"station": f"%{station.upper()}%"} if station is not None else {}
+    with engine.connect() as conn:
+        return conn.execute(query, params).scalar()
 
-    if not os.path.isdir(mp3_dir):
+
+def test_share(station: str | None) -> tuple[bool, str]:
+    import os
+
+    ruta = find_sample_backup_path(station)
+    if ruta is None:
         return (
             False,
-            f"share root {share_root} reachable ({len(root_entries)} entries), "
-            f"but {mp3_dir} is not -- resolve_testigo_path() expects ARCHIVO's "
-            f"own subfolder to live here",
+            "FAILED -- no EMISORAS_MENCION-opted-in, backed-up testigo found "
+            f"{'for station ' + station if station else 'at all'} -- check "
+            "EMISORAS_MENCION.MENCIONES/FECHA_MENCION and whether that "
+            "station's testigos have been archived yet",
         )
 
-    mp3_entries = os.listdir(mp3_dir)
-    return (
-        True,
-        f"reachable OK -- {mp3_dir} has {len(mp3_entries)} entries, "
-        f"sample: {mp3_entries[:5]}",
-    )
+    if not os.path.isfile(ruta):
+        return False, f"FAILED -- resolved path {ruta} is not reachable"
+
+    return True, f"reachable OK -- {ruta}"
 
 
 def main() -> None:
-    hostname = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_HOSTNAME
+    station = sys.argv[1] if len(sys.argv) > 1 else None
 
     print("=" * 60)
     print("Tool 2 smoke test")
     print("=" * 60)
 
-    print("\n[1/2] Checking DB connectivity (OrbitMedia_Test)...")
+    print("\n[1/2] Checking DB connectivity...")
     db_ok, db_msg = test_db()
     print(f"  {'PASS' if db_ok else 'FAIL'}: {db_msg}")
 
-    print(f"\n[2/2] Checking network share for host '{hostname}'...")
-    share_ok, share_msg = test_share(hostname)
+    station_label = station or "any opted-in station"
+    print(f"\n[2/2] Checking backup share for {station_label}...")
+    share_ok, share_msg = test_share(station)
     print(f"  {'PASS' if share_ok else 'FAIL'}: {share_msg}")
 
     print("\n" + "=" * 60)
