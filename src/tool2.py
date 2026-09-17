@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import sys
@@ -11,6 +12,63 @@ from sqlalchemy import bindparam, text
 from src.audio import transcribe_timestamped_segments
 from src.db.db import engine
 from src.extraction import extract_brand_mentions
+
+LOG_FILE = os.environ.get("TOOL2_LOG_FILE", "tool2.log")
+
+logger = logging.getLogger("tool2")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    # Guards against duplicate handlers (and duplicate log lines) if this
+    # module gets imported more than once in the same process, e.g. from
+    # scripts/tool2_test.py.
+    _formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    _console_handler = logging.StreamHandler()
+    _console_handler.setFormatter(_formatter)
+    logger.addHandler(_console_handler)
+    try:
+        _file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+        _file_handler.setFormatter(_formatter)
+        logger.addHandler(_file_handler)
+    except OSError:
+        # Don't let an unwritable log directory take down the whole service --
+        # console logging alone still works.
+        logger.warning(f"could not open log file {LOG_FILE!r}, file logging disabled")
+
+
+def _format_exception_detail(e: Exception) -> str:
+    """Pulls out whatever extra diagnostic detail an exception actually
+    carries beyond repr(e) -- added 2026-09-17 after a production run hit
+    `NotFoundError('Error code: 404')` from the OpenAI API with no further
+    detail visible in the previous plain `print(f"...{e!r}...")` logging,
+    making it impossible to tell whether the 404 came from the transcription
+    call, the extraction call, which model/endpoint, or what OpenAI's actual
+    response body said. Duck-types rather than importing openai's exception
+    classes, since a DB (pymssql) or OS-level exception can turn up here too
+    and won't have these attributes."""
+    parts = [repr(e)]
+
+    status_code = getattr(e, "status_code", None)
+    if status_code is not None:
+        parts.append(f"status_code={status_code}")
+
+    response = getattr(e, "response", None)
+    if response is not None:
+        request_id = None
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            request_id = headers.get("x-request-id")
+        if request_id:
+            parts.append(f"request_id={request_id}")
+        response_text = getattr(response, "text", None)
+        if response_text:
+            parts.append(f"response_body={response_text}")
+
+    body = getattr(e, "body", None)
+    if body is not None:
+        parts.append(f"body={body}")
+
+    return " | ".join(parts)
+
 
 DEBUG_MENTIONS_DIR = os.environ.get("TOOL2_DEBUG_MENTIONS_DIR", "debug_mentions")
 DEBUG_CONTEXT_PADDING_SECONDS = float(os.environ.get("TOOL2_DEBUG_CONTEXT_PADDING_SECONDS", 10))
@@ -372,38 +430,46 @@ def main(id_testigo_min: int | None = None) -> None:
 
     segments = fetch_discarded_segments(id_testigo_min=id_testigo_min)
     total = len(segments)
-    print(f"id_testigo_min={id_testigo_min}: found {total} segment(s) to process")
+    logger.info(f"id_testigo_min={id_testigo_min}: found {total} segment(s) to process")
     max_id_testigo = id_testigo_min - 1
 
     for done, segment in enumerate(segments, start=1):
         label = f"ID_SEGMENTO={segment['ID_SEGMENTO']}"
-        print("=" * 40)
-        print("Processing segment:", label)
+        logger.info("=" * 40)
+        logger.info(f"Processing segment: {label}")
         max_id_testigo = max(max_id_testigo, segment["ID_TESTIGO"])
 
         try:
             results = process(segment)
         except FileNotFoundError:
-            print(f"[{done}/{total}] {label}: recording not reachable, skipping")
+            logger.info(f"[{done}/{total}] {label}: recording not reachable, skipping")
             continue
         except Exception as e:
             # Any other per-segment failure (corrupt/locked file, decode error,
-            # OS-level path errors, transient share hiccups, etc.) must not abort
-            # the whole run -- max_id_testigo above already advanced past this
-            # segment's testigo, but write_last_id_testigo() only runs after this
-            # loop finishes, so an uncaught exception here previously meant the
-            # saved position never moved and the *same* bad segment was retried,
-            # unchanged, every single cycle forever. Log and move on instead.
-            print(f"[{done}/{total}] {label}: processing failed ({e!r}), skipping")
+            # OS-level path errors, transient share hiccups, API errors, etc.)
+            # must not abort the whole run -- max_id_testigo above already
+            # advanced past this segment's testigo, but write_last_id_testigo()
+            # only runs after this loop finishes, so an uncaught exception here
+            # previously meant the saved position never moved and the *same*
+            # bad segment was retried, unchanged, every single cycle forever.
+            # Log the full traceback + whatever extra detail the exception
+            # carries (see _format_exception_detail()) and move on -- a bare
+            # repr(e) wasn't enough to diagnose a production NotFoundError
+            # from the OpenAI API (2026-09-17), since it hid which call
+            # failed, the status code, and the response body.
+            logger.error(
+                f"[{done}/{total}] {label}: processing failed ({_format_exception_detail(e)}), skipping",
+                exc_info=True,
+            )
             continue
 
         if not results:
-            print(f"[{done}/{total}] {label}: no brand mentions found")
+            logger.info(f"[{done}/{total}] {label}: no brand mentions found")
             continue
 
         save_mentions(results)
         for result in results:
-            print(
+            logger.info(
                 f"[{done}/{total}] {label}: {result['anunciante']} / {result['marca']} "
                 f"({result['start']:.2f}s-{result['end']:.2f}s)"
             )
@@ -422,7 +488,10 @@ def run_forever(poll_interval_seconds: int = POLL_INTERVAL_SECONDS) -> None:
         try:
             main()
         except Exception as e:
-            print(f"run failed, will retry next cycle: {e}")
+            logger.error(
+                f"run failed, will retry next cycle: {_format_exception_detail(e)}",
+                exc_info=True,
+            )
         time.sleep(poll_interval_seconds)
 
 
