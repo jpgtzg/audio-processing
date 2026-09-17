@@ -48,6 +48,13 @@ jobs:
           --collect-all pymssql
           run_tool2_test.py
 
+      - name: Build create_mentions_table.exe
+        run: >
+          uv run pyinstaller --onefile --console --name create_mentions_table
+          --add-data "src/db/freetds.conf;src/db"
+          --collect-all pymssql
+          run_create_mentions_table.py
+
       - name: Upload tool1.exe
         uses: actions/upload-artifact@v4
         with:
@@ -71,3 +78,9 @@ jobs:
         with:
           name: tool2-test-windows
           path: dist/tool2_test.exe
+
+      - name: Upload create_mentions_table.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-mentions-table-windows
+          path: dist/create_mentions_table.exe

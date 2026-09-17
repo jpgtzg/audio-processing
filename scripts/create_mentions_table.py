@@ -47,7 +47,7 @@ CREATE TABLE MENCIONES_COMERCIALES (
     ID_SEGMENTO INT NOT NULL,
     ID_TESTIGO INT NOT NULL,
     ID_ESTATUS_SEGMENTO INT NOT NULL,
-    MOTIVO_DESCARTE VARCHAR(20) NULL,
+    MOTIVO_DESCARTE VARCHAR(200) NULL,
     TITULO VARCHAR(200) NULL,
     ANUNCIANTE VARCHAR(200) NULL,
     MARCA VARCHAR(200) NULL,
@@ -65,10 +65,29 @@ CREATE TABLE MENCIONES_COMERCIALES (
 # (column_name, ALTER TABLE statement to add it) -- applied in order to an
 # already-existing table, skipping any column that's already there.
 COLUMN_MIGRATIONS: list[tuple[str, str]] = [
-    ("MOTIVO_DESCARTE", "ALTER TABLE MENCIONES_COMERCIALES ADD MOTIVO_DESCARTE VARCHAR(20) NULL"),
+    ("MOTIVO_DESCARTE", "ALTER TABLE MENCIONES_COMERCIALES ADD MOTIVO_DESCARTE VARCHAR(200) NULL"),
     ("NUM_ANUNC", "ALTER TABLE MENCIONES_COMERCIALES ADD NUM_ANUNC INT NULL"),
     ("NUM_MARCA", "ALTER TABLE MENCIONES_COMERCIALES ADD NUM_MARCA INT NULL"),
     ("TRANSCRIPCION_COMPLETA", "ALTER TABLE MENCIONES_COMERCIALES ADD TRANSCRIPCION_COMPLETA VARCHAR(MAX) NULL"),
+]
+
+# (column_name, target_length, ALTER TABLE statement) -- like COLUMN_MIGRATIONS
+# but for widening a column that already exists and turned out too small once
+# real data arrived, rather than adding a missing one. Only actually runs the
+# ALTER when the column's current width is below target_length.
+#
+# MOTIVO_DESCARTE was VARCHAR(20), sized for the original 3 short hardcoded
+# labels ("LOCUTOR"/"NOTICIERO"/"CANCION"). Since 2026-09-17 it's populated
+# live from CAT_ESTATUS_SEGMENTO.DESCRIPCION instead (see src/tool2.py
+# get_motivo_descarte_labels()), which runs up to 38 chars (e.g. "Descarte
+# automático (Duracion Mínima)") -- caused a live "String or binary data
+# would be truncated" INSERT failure the first time a long one came through.
+COLUMN_WIDENINGS: list[tuple[str, int, str]] = [
+    (
+        "MOTIVO_DESCARTE",
+        200,
+        "ALTER TABLE MENCIONES_COMERCIALES ALTER COLUMN MOTIVO_DESCARTE VARCHAR(200) NULL",
+    ),
 ]
 
 
@@ -90,9 +109,26 @@ def main():
                 if column_exists is None:
                     conn.execute(text(alter_sql))
                     added.append(column_name)
-            if added:
+
+            widened = []
+            for column_name, target_length, alter_sql in COLUMN_WIDENINGS:
+                current_length = conn.execute(
+                    text(
+                        "SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS "
+                        "WHERE TABLE_NAME = 'MENCIONES_COMERCIALES' AND COLUMN_NAME = :column_name"
+                    ),
+                    {"column_name": column_name},
+                ).scalar()
+                if current_length is not None and current_length < target_length:
+                    conn.execute(text(alter_sql))
+                    widened.append(column_name)
+
+            if added or widened:
                 conn.commit()
-                print(f"MENCIONES_COMERCIALES already exists -- added columns: {', '.join(added)}.")
+                if added:
+                    print(f"MENCIONES_COMERCIALES already exists -- added columns: {', '.join(added)}.")
+                if widened:
+                    print(f"MENCIONES_COMERCIALES already exists -- widened columns: {', '.join(widened)}.")
             else:
                 print("MENCIONES_COMERCIALES already exists, skipping.")
             return
