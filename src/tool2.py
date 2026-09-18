@@ -3,7 +3,9 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
 from pydub import AudioSegment
@@ -74,6 +76,13 @@ DEBUG_MENTIONS_DIR = os.environ.get("TOOL2_DEBUG_MENTIONS_DIR", "debug_mentions"
 DEBUG_CONTEXT_PADDING_SECONDS = float(os.environ.get("TOOL2_DEBUG_CONTEXT_PADDING_SECONDS", 10))
 LAST_ID_TESTIGO_FILE = os.environ.get("TOOL2_LAST_ID_TESTIGO_FILE", "tool2_last_id_testigo.txt")
 POLL_INTERVAL_SECONDS = int(os.environ.get("TOOL2_POLL_INTERVAL_SECONDS", 60 * 60))
+# Pipeline is almost entirely I/O-bound (OpenAI API calls, network-share file
+# reads, DB writes) -- threads are a good fit despite the GIL, since it's
+# released during I/O waits. Conservative default: high enough to meaningfully
+# overlap wait time, low enough to be unlikely to trip OpenAI per-account rate
+# limits or exhaust the DB connection pool (SQLAlchemy's default pool_size=5 +
+# max_overflow=10 comfortably covers this many concurrent connections).
+MAX_WORKERS = int(os.environ.get("TOOL2_MAX_WORKERS", 5))
 ESTATUS_DESCARTADO_LOCUTOR: int = 10
 ESTATUS_DESCARTADO_NOTICIERO: int = 11
 ESTATUS_DESCARTADO_CANCION: int = 12
@@ -416,14 +425,70 @@ def write_last_id_testigo(id_testigo: int) -> None:
         f.write(str(id_testigo))
 
 
+_progress_lock = threading.Lock()
+_progress_done = 0
+
+
+def _process_one_segment(segment: dict, total: int) -> None:
+    """Runs process() + save_mentions() for a single segment and logs the
+    outcome, swallowing (never re-raising) any failure -- factored out of
+    main() so it can be submitted to a thread pool. Any exception here is
+    handled and logged exactly the same way whether called from a thread
+    pool worker or a plain sequential loop (MAX_WORKERS=1)."""
+    global _progress_done
+    with _progress_lock:
+        _progress_done += 1
+        done = _progress_done
+
+    label = f"ID_SEGMENTO={segment['ID_SEGMENTO']}"
+    logger.info(f"[{done}/{total}] Processing segment: {label}")
+
+    try:
+        results = process(segment)
+    except FileNotFoundError:
+        logger.info(f"[{done}/{total}] {label}: recording not reachable, skipping")
+        return
+    except Exception as e:
+        # Any other per-segment failure (corrupt/locked file, decode error,
+        # OS-level path errors, transient share hiccups, API errors, etc.)
+        # must not abort the whole run -- main() already advances
+        # max_id_testigo past every segment attempted this run regardless of
+        # outcome, so a permanently-failing segment doesn't stall future runs
+        # retrying it forever. Log the full traceback + whatever extra detail
+        # the exception carries (see _format_exception_detail()) and move on
+        # -- a bare repr(e) wasn't enough to diagnose a production
+        # NotFoundError from the OpenAI API (2026-09-17), since it hid which
+        # call failed, the status code, and the response body.
+        logger.error(
+            f"[{done}/{total}] {label}: processing failed ({_format_exception_detail(e)}), skipping",
+            exc_info=True,
+        )
+        return
+
+    if not results:
+        logger.info(f"[{done}/{total}] {label}: no brand mentions found")
+        return
+
+    save_mentions(results)
+    for result in results:
+        logger.info(
+            f"[{done}/{total}] {label}: {result['anunciante']} / {result['marca']} "
+            f"({result['start']:.2f}s-{result['end']:.2f}s)"
+        )
+
+
 def main(id_testigo_min: int | None = None) -> None:
-    """Runs once over every discarded segment with ID_TESTIGO >= id_testigo_min.
-    If id_testigo_min isn't given, resumes from the last ID_TESTIGO this
+    """Runs once over every discarded segment with ID_TESTIGO >= id_testigo_min,
+    processing up to MAX_WORKERS segments concurrently (see _process_one_segment())
+    -- the pipeline is almost entirely I/O-bound (OpenAI API calls, network-share
+    file reads, DB writes), so threads meaningfully overlap wait time despite the
+    GIL. If id_testigo_min isn't given, resumes from the last ID_TESTIGO this
     process finished on (see read_last_id_testigo()) -- pass it explicitly
     only for a one-off backfill/dry run. On a normal run, advances the saved
     ID_TESTIGO past every testigo actually seen this time, regardless of
     per-segment errors, so a permanently-missing recording (FileNotFoundError)
     doesn't stall future runs retrying it forever."""
+    global _progress_done
     resumed = id_testigo_min is None
     if resumed:
         id_testigo_min = read_last_id_testigo()
@@ -431,48 +496,17 @@ def main(id_testigo_min: int | None = None) -> None:
     segments = fetch_discarded_segments(id_testigo_min=id_testigo_min)
     total = len(segments)
     logger.info(f"id_testigo_min={id_testigo_min}: found {total} segment(s) to process")
-    max_id_testigo = id_testigo_min - 1
+    _progress_done = 0
 
-    for done, segment in enumerate(segments, start=1):
-        label = f"ID_SEGMENTO={segment['ID_SEGMENTO']}"
-        logger.info("=" * 40)
-        logger.info(f"Processing segment: {label}")
-        max_id_testigo = max(max_id_testigo, segment["ID_TESTIGO"])
+    # Every segment fetched this run gets its testigo counted toward the saved
+    # position regardless of processing outcome -- computed upfront over the
+    # whole batch (order-independent) rather than incrementally per-segment,
+    # since segments are no longer necessarily processed in order.
+    max_id_testigo = max([id_testigo_min - 1] + [s["ID_TESTIGO"] for s in segments])
 
-        try:
-            results = process(segment)
-        except FileNotFoundError:
-            logger.info(f"[{done}/{total}] {label}: recording not reachable, skipping")
-            continue
-        except Exception as e:
-            # Any other per-segment failure (corrupt/locked file, decode error,
-            # OS-level path errors, transient share hiccups, API errors, etc.)
-            # must not abort the whole run -- max_id_testigo above already
-            # advanced past this segment's testigo, but write_last_id_testigo()
-            # only runs after this loop finishes, so an uncaught exception here
-            # previously meant the saved position never moved and the *same*
-            # bad segment was retried, unchanged, every single cycle forever.
-            # Log the full traceback + whatever extra detail the exception
-            # carries (see _format_exception_detail()) and move on -- a bare
-            # repr(e) wasn't enough to diagnose a production NotFoundError
-            # from the OpenAI API (2026-09-17), since it hid which call
-            # failed, the status code, and the response body.
-            logger.error(
-                f"[{done}/{total}] {label}: processing failed ({_format_exception_detail(e)}), skipping",
-                exc_info=True,
-            )
-            continue
-
-        if not results:
-            logger.info(f"[{done}/{total}] {label}: no brand mentions found")
-            continue
-
-        save_mentions(results)
-        for result in results:
-            logger.info(
-                f"[{done}/{total}] {label}: {result['anunciante']} / {result['marca']} "
-                f"({result['start']:.2f}s-{result['end']:.2f}s)"
-            )
+    if segments:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            list(executor.map(lambda s: _process_one_segment(s, total), segments))
 
     if resumed:
         write_last_id_testigo(max_id_testigo + 1)

@@ -27,3 +27,5 @@ share/
 
 # tool2 service runtime state (per-deployment, not shared)
 tool2_last_id_testigo.txt
+tool2.log
+debug_mentions/
