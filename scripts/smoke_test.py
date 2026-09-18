@@ -3,16 +3,10 @@
 Checks two things independently, since either one can be broken without the
 other: (1) the DB is reachable with the credentials in .env, and (2) at least
 one EMISORAS_MENCION-opted-in testigo's backup share (e.g.
-\\Dbackup04\\backup\\...) is reachable. Meant to be run as smoke_test.exe on
-SaraAlt before relying on Tool 2's real pipeline -- see docs/handoff.md
-"File access" section.
-
-Updated 2026-09-17: this used to check the live \\sara<n>\\sara\\mp3 share
-directly; that share is retired for Tool 2's real pipeline (see
-src/tool2.py's fetch_discarded_segments() docstring) -- files now come from
-wherever SARA's own backup pipeline archived the testigo to, which isn't a
-fixed template anymore, so this resolves one real sample path from the DB
-itself instead of guessing a share root.
+\\Dbackup04\\backup\\...) is reachable -- resolved via a real query rather
+than a fixed share template, since backup file locations aren't uniform
+across hosts. Meant to be run as smoke_test.exe on SaraAlt before relying on
+Tool 2's real pipeline -- see docs/handoff.md.
 
 Usage: smoke_test.exe [station]   (station defaults to matching any opted-in
                                    station; pass a callsign substring, e.g.

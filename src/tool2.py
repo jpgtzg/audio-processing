@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 import sys
 import tempfile
 import threading
@@ -38,15 +37,10 @@ if not logger.handlers:
 
 
 def _format_exception_detail(e: Exception) -> str:
-    """Pulls out whatever extra diagnostic detail an exception actually
-    carries beyond repr(e) -- added 2026-09-17 after a production run hit
-    `NotFoundError('Error code: 404')` from the OpenAI API with no further
-    detail visible in the previous plain `print(f"...{e!r}...")` logging,
-    making it impossible to tell whether the 404 came from the transcription
-    call, the extraction call, which model/endpoint, or what OpenAI's actual
-    response body said. Duck-types rather than importing openai's exception
-    classes, since a DB (pymssql) or OS-level exception can turn up here too
-    and won't have these attributes."""
+    """Pulls out whatever extra diagnostic detail an exception carries beyond
+    repr(e) -- status code, response body/request ID, error body. Duck-types
+    rather than importing openai's exception classes, since a DB (pymssql) or
+    OS-level exception can turn up here too and won't have these attributes."""
     parts = [repr(e)]
 
     status_code = getattr(e, "status_code", None)
@@ -72,16 +66,12 @@ def _format_exception_detail(e: Exception) -> str:
     return " | ".join(parts)
 
 
-DEBUG_MENTIONS_DIR = os.environ.get("TOOL2_DEBUG_MENTIONS_DIR", "debug_mentions")
-DEBUG_CONTEXT_PADDING_SECONDS = float(os.environ.get("TOOL2_DEBUG_CONTEXT_PADDING_SECONDS", 10))
 LAST_ID_TESTIGO_FILE = os.environ.get("TOOL2_LAST_ID_TESTIGO_FILE", "tool2_last_id_testigo.txt")
 POLL_INTERVAL_SECONDS = int(os.environ.get("TOOL2_POLL_INTERVAL_SECONDS", 60 * 60))
-# Pipeline is almost entirely I/O-bound (OpenAI API calls, network-share file
-# reads, DB writes) -- threads are a good fit despite the GIL, since it's
-# released during I/O waits. Conservative default: high enough to meaningfully
-# overlap wait time, low enough to be unlikely to trip OpenAI per-account rate
-# limits or exhaust the DB connection pool (SQLAlchemy's default pool_size=5 +
-# max_overflow=10 comfortably covers this many concurrent connections).
+# Segments are processed concurrently (see main()) -- the pipeline is I/O-bound
+# (API calls, network file reads, DB writes), so this overlaps wait time
+# without needing more CPU. Kept modest by default to stay under OpenAI
+# per-account rate limits and SQLAlchemy's default connection pool size.
 MAX_WORKERS = int(os.environ.get("TOOL2_MAX_WORKERS", 5))
 ESTATUS_DESCARTADO_LOCUTOR: int = 10
 ESTATUS_DESCARTADO_NOTICIERO: int = 11
@@ -111,11 +101,9 @@ TOOL2_ESTATUS_IDS: list[int] = [
 def get_motivo_descarte_labels() -> dict[int, str]:
     """Live-pulled MOTIVO_DESCARTE label for every code in TOOL2_ESTATUS_IDS,
     sourced from CAT_ESTATUS_SEGMENTO.DESCRIPCION rather than a hand-maintained
-    dict -- client added 7 more discard codes on top of the original 3
-    (2026-09-17), and hardcoding a label per code risked silently drifting
-    from the catalog as more get added later. Cached per-process since the
-    catalog changes rarely, same pattern as get_categorias() in
-    src/extraction.py."""
+    dict, so new codes don't need a matching label added by hand. Cached
+    per-process since the catalog changes rarely, same pattern as
+    get_categorias() in src/extraction.py."""
     with engine.connect() as conn:
         rows = conn.execute(
             text(
@@ -142,45 +130,20 @@ def fetch_discarded_segments(
 ) -> list[dict]:
     """SEGMENTO_SARA rows discarded for one of the given ID_ESTATUS_SEGMENTO
     reasons, joined to resolve a playable clip's path (RUTA) and channel
-    (CANAL) directly -- no separate resolve_testigo_path() step needed
-    anymore, see below.
+    (CANAL) directly, scoped to stations opted into EMISORAS_MENCION.
 
-    Client-requested rework (2026-09-17): two changes that turned out not to
-    be separable.
-
-    1. Scope is now opt-in per station, via EMISORAS_MENCION.MENCIONES=1,
-       active only from that station's own EMISORAS_MENCION.FECHA_MENCION
-       control date -- lets the client pilot this on one station (e.g.
-       XHLUPE) before rolling out wider, instead of running against every
-       station.
-    2. The source file is no longer the live \\sara<n>\\sara\\mp3 share
-       (gated on ID_ESTATUS_TESTIGO IN (3,5), "Procesado con Blank"/
-       "Reproceso") -- it's wherever SARA's own backup pipeline archived the
-       testigo to (e.g. \\Dbackup04\\backup\\...), for testigos with
-       ID_ESTATUS_TESTIGO IN (10,20), "Terminado"/"Borrado".
-
-    These two changes are bundled here because they're not actually
-    independent: TESTIGO_SARA.ID_MULTIMEDIA_ARCHIVO (the backup link) is NULL
-    for the vast majority of *all* testigos regardless of status (~99.9% of
-    status-10, ~88% of status-20, checked directly against OrbitMedia_Test)
-    -- the backup/archive pipeline appears to only cover stations opted into
-    mention detection, so the EMISORAS_MENCION join isn't an optional
-    narrowing, it's load-bearing for the new file-source query to find
-    anything at all.
-
-    MULTIMEDIA has two rows per MULTIMEDIA_ARCHIVO (one per CANAL) with an
-    identical RUTA/ARCHIVO/HOST -- the archived file is still the same
-    stereo dual-emission recording, just relocated, so `mm.CANAL = 1` below
-    just picks one of the two identical rows to avoid doubling every
-    segment. The returned TESTIGO_SARA.CANAL (unaffected by this change) is
-    what actually tells crop_segment()/save_mention_debug_clips() which
-    channel to isolate from the audio.
-
-    The RUTA column is built with the exact same string concatenation as the
-    client's own verified SQL, not reassembled from parts in Python -- this
-    sidesteps a repeat of the earlier double-"mp3"-segment path bug (see
-    docs/handoff.md), since the path string is never touched on the Python
-    side.
+    - Only rows for a station with EMISORAS_MENCION.MENCIONES=1, on/after that
+      station's own FECHA_MENCION control date, are returned.
+    - Only testigos SARA itself has finished archiving to backup storage
+      (ID_ESTATUS_TESTIGO IN (10, 20)) are eligible -- MULTIMEDIA_ARCHIVO/
+      MULTIMEDIA/HOST resolve the actual backup path (RUTA), which is built
+      with plain SQL string concatenation rather than reassembled from parts
+      in Python, so the path is never touched on the Python side.
+    - MULTIMEDIA has two rows per MULTIMEDIA_ARCHIVO (one per CANAL) with an
+      identical RUTA/ARCHIVO/HOST, since the archived file is still the same
+      stereo dual-emission recording -- `mm.CANAL = 1` just picks one to avoid
+      doubling every segment. The returned TESTIGO_SARA.CANAL is what
+      actually tells crop_segment() which channel to isolate from the audio.
 
     SEGMENTO_SARA is 100M+ rows (12M+ for song-discard alone) -- always pass
     id_testigo_min (or add another bound) rather than pulling the whole table."""
@@ -224,19 +187,15 @@ def fetch_discarded_segments(
 
 
 def crop_segment(testigo_path: str, inicio: float, duracion: float, canal: int) -> str:
-    """Crops [inicio, inicio + duracion] out of a testigo recording and exports it
-    to a temp wav file for transcription. Assumes INICIO/DURACION are both in
-    seconds (SEGMENTO_SARA's own offset convention into its parent testigo --
-    distinct from ALTAS_SARA_FP.INICIO, which is confirmed to be milliseconds).
-    Not yet literally confirmed with the client; worth a quick sanity check by ear
-    before this goes live, the same way ALTAS_SARA_FP's units were.
+    """Crops [inicio, inicio + duracion] out of a testigo recording and exports
+    it to a temp wav file for transcription. INICIO/DURACION are in seconds
+    (distinct from ALTAS_SARA_FP.INICIO, which is milliseconds).
 
-    Client confirmed (2026-09-04): each file under mp3/ actually carries two
-    simultaneous, unrelated station emissions multiplexed onto stereo left/right --
-    TESTIGO_SARA.CANAL says which one this row is (1=left, 2=right). Isolating the
-    right channel here (rather than mixing both down to mono) is required, not
-    optional -- feeding Whisper both channels blended together is a likely cause
-    of the garbled/looping transcripts seen before this fix."""
+    Each backup file multiplexes two unrelated station emissions onto stereo
+    left/right; CANAL (1=left, 2=right) says which one this row is. Isolating
+    that single channel (rather than downmixing both to mono) is required --
+    feeding Whisper both channels blended together produces garbled, looping
+    transcripts."""
     audio = AudioSegment.from_file(testigo_path)
     if audio.channels >= 2:
         if canal not in (1, 2):
@@ -249,59 +208,6 @@ def crop_segment(testigo_path: str, inicio: float, duracion: float, canal: int) 
     tmp_path = tempfile.mktemp(suffix=".wav")
     audio[start_ms:end_ms].export(tmp_path, format="wav")
     return tmp_path
-
-
-def save_mention_debug_clips(testigo_path: str, segment: dict, mentions: list[dict]) -> None:
-    """DEBUG (temporary, 2026-09-09): for a segment with at least one detected
-    mention, saves to DEBUG_MENTIONS_DIR (a) the exact audio span flagged for
-    each individual mention, and (b) one shared context clip covering the
-    *whole discarded segment* ([INICIO, INICIO+DURACION]) padded with
-    DEBUG_CONTEXT_PADDING_SECONDS on each side (clamped to the testigo's own
-    bounds) -- not just padding around the narrow mention span -- so it can be
-    judged by ear against what's actually happening around it: is the music
-    really ducking down for a locutor's live read somewhere in this segment (a
-    real spot), or is this just a bare mention with nothing going on around it
-    (not a spot)? See the "spot, not mention" prompt reframing in
-    docs/progress.md, which this is meant to validate by ear.
-
-    Reads directly from the full testigo recording (not the already-cropped
-    clip used for transcription, which is bounded to the segment's own window
-    and can't provide context beyond it), loading it once per segment rather
-    than once per mention. Remove once the reframing above is confirmed
-    working against live data."""
-    if not mentions:
-        return
-
-    os.makedirs(DEBUG_MENTIONS_DIR, exist_ok=True)
-    audio = AudioSegment.from_file(testigo_path)
-    canal = segment["CANAL"]
-    if audio.channels >= 2:
-        if canal not in (1, 2):
-            raise ValueError(f"CANAL must be 1 or 2 to pick a channel, got {canal!r}")
-        audio = audio.split_to_mono()[canal - 1]
-
-    segment_start_ms = int(segment["INICIO"] * 1000)
-    segment_end_ms = segment_start_ms + int(segment["DURACION"] * 1000)
-    pad_ms = int(DEBUG_CONTEXT_PADDING_SECONDS * 1000)
-
-    context_start_ms = max(0, segment_start_ms - pad_ms)
-    context_end_ms = min(len(audio), segment_end_ms + pad_ms)
-    audio[context_start_ms:context_end_ms].export(
-        os.path.join(DEBUG_MENTIONS_DIR, f"{segment['ID_SEGMENTO']}_context.wav"), format="wav"
-    )
-
-    for mention in mentions:
-        mention_start_ms = segment_start_ms + int(mention["start"] * 1000)
-        mention_end_ms = segment_start_ms + int(mention["end"] * 1000)
-        marca = (
-            re.sub(r"[^A-Za-z0-9_-]+", "_", str(mention.get("marca") or "mention")).strip("_")[:50]
-            or "mention"
-        )
-        base = f"{segment['ID_SEGMENTO']}_{marca}_{int(mention['start'] * 1000)}-{int(mention['end'] * 1000)}ms"
-
-        audio[mention_start_ms:mention_end_ms].export(
-            os.path.join(DEBUG_MENTIONS_DIR, f"{base}.wav"), format="wav"
-        )
 
 
 def process(segment: dict) -> list[dict]:
@@ -318,7 +224,6 @@ def process(segment: dict) -> list[dict]:
         segments = transcribe_timestamped_segments(clip_path)
         full_transcript = " ".join(s["text"] for s in segments)
         mentions = extract_brand_mentions(segments)
-        save_mention_debug_clips(segment["RUTA"], segment, mentions)
     finally:
         os.remove(clip_path)
 
@@ -337,21 +242,16 @@ def process(segment: dict) -> list[dict]:
 
 def save_mentions(mentions: list[dict]) -> None:
     """Inserts detected brand mentions into MENCIONES_COMERCIALES (see
-    scripts/create_mentions_table.py -- must be run once, by a DB login with
-    CREATE TABLE rights, before this will work; the login used for day-to-day
-    reads/writes only has SELECT so far).
+    scripts/create_mentions_table.py to create/migrate the table).
 
-    Client-requested (2026-09-08): ANUNCIANTE/MARCA stay as the raw text Whisper
-    extraction detected (kept so a capturista can see/link a mention even when
-    it doesn't match anything in the catalogs); NUM_ANUNC/NUM_MARCA carry the
-    fuzzy-matched ANUNCIANTES.NUM_ANUNC/MARCAS.NUM_MARCA IDs when confident
-    (see extraction.match_anunciante()/match_marca()), NULL otherwise.
-    TRANSCRIPCION stores only the sentence(s) spanning the mention itself;
-    TRANSCRIPCION_COMPLETA (2026-09-08) keeps the entire clip's transcript
-    alongside it, for anyone reviewing a mention who wants the full context.
-
-    TITULO currently reuses MARCA -- Tool 2 doesn't generate a separate spot
-    title the way Tool 1's extraction does; revisit if the client wants one."""
+    ANUNCIANTE/MARCA carry the raw text Whisper extraction detected, kept even
+    when it doesn't match anything in the catalogs so a capturista can still
+    see/link the mention manually; NUM_ANUNC/NUM_MARCA carry the fuzzy-matched
+    ANUNCIANTES.NUM_ANUNC/MARCAS.NUM_MARCA IDs when confident (see
+    extraction.match_anunciante()/match_marca()), NULL otherwise. TRANSCRIPCION
+    is only the sentence(s) spanning the mention itself; TRANSCRIPCION_COMPLETA
+    keeps the entire clip's transcript for full context. TITULO currently
+    reuses MARCA -- Tool 2 doesn't generate a separate spot title."""
     if not mentions:
         return
 
@@ -431,22 +331,17 @@ _progress_done = 0
 
 def _segment_already_recorded(id_segmento: int) -> bool:
     """Whether ID_SEGMENTO already has at least one row in
-    MENCIONES_COMERCIALES. The saved position (LAST_ID_TESTIGO_FILE) only
-    advances once per *entire batch*, after every segment in it has been
-    attempted (see main()) -- so killing the process mid-batch (Ctrl+C, a
-    crash, a restart to pick up a new build) means the next run resumes from
-    the same starting point and re-fetches the whole batch, including
-    segments that were already fully processed and inserted last time.
-    save_mentions() is a plain INSERT with no dedup key, so without this
-    check a segment that already found a real mention would get duplicate
-    rows on every restart that happens mid-batch. Called before the expensive
-    transcription/extraction work, not just before the insert, so a repeat
-    segment is also cheap to skip, not just safe to skip.
+    MENCIONES_COMERCIALES. LAST_ID_TESTIGO_FILE only advances once per entire
+    batch (see main()), so a process killed mid-batch resumes from the same
+    starting point next time and re-fetches segments already processed;
+    save_mentions() is a plain INSERT with no dedup key. Called before the
+    expensive transcription/extraction work, not just before the insert, so a
+    repeat segment is cheap to skip, not just safe to skip.
 
-    Doesn't catch every case: a segment that was fully processed but found
-    zero mentions has no row to check against, so it'll still be
-    reprocessed (wasted work, but not harmful -- nothing gets inserted
-    either way unless that rerun genuinely finds something new)."""
+    Doesn't catch a segment that was processed but found zero mentions (no
+    row to check against) -- that gets reprocessed, which is wasted work but
+    not harmful, since nothing gets inserted either way unless it genuinely
+    finds something new."""
     with engine.connect() as conn:
         return (
             conn.execute(
@@ -484,14 +379,11 @@ def _process_one_segment(segment: dict, total: int) -> None:
     except Exception as e:
         # Any other per-segment failure (corrupt/locked file, decode error,
         # OS-level path errors, transient share hiccups, API errors, etc.)
-        # must not abort the whole run -- main() already advances
-        # max_id_testigo past every segment attempted this run regardless of
-        # outcome, so a permanently-failing segment doesn't stall future runs
-        # retrying it forever. Log the full traceback + whatever extra detail
-        # the exception carries (see _format_exception_detail()) and move on
-        # -- a bare repr(e) wasn't enough to diagnose a production
-        # NotFoundError from the OpenAI API (2026-09-17), since it hid which
-        # call failed, the status code, and the response body.
+        # must not abort the whole run -- main() advances max_id_testigo past
+        # every segment attempted this run regardless of outcome, so a
+        # permanently-failing segment doesn't stall future runs retrying it
+        # forever. Log the full traceback plus whatever extra detail the
+        # exception carries (see _format_exception_detail()) and move on.
         logger.error(
             f"[{done}/{total}] {label}: processing failed ({_format_exception_detail(e)}), skipping",
             exc_info=True,
@@ -512,15 +404,13 @@ def _process_one_segment(segment: dict, total: int) -> None:
 
 def main(id_testigo_min: int | None = None) -> None:
     """Runs once over every discarded segment with ID_TESTIGO >= id_testigo_min,
-    processing up to MAX_WORKERS segments concurrently (see _process_one_segment())
-    -- the pipeline is almost entirely I/O-bound (OpenAI API calls, network-share
-    file reads, DB writes), so threads meaningfully overlap wait time despite the
-    GIL. If id_testigo_min isn't given, resumes from the last ID_TESTIGO this
-    process finished on (see read_last_id_testigo()) -- pass it explicitly
-    only for a one-off backfill/dry run. On a normal run, advances the saved
-    ID_TESTIGO past every testigo actually seen this time, regardless of
-    per-segment errors, so a permanently-missing recording (FileNotFoundError)
-    doesn't stall future runs retrying it forever."""
+    processing up to MAX_WORKERS segments concurrently (see
+    _process_one_segment()). If id_testigo_min isn't given, resumes from the
+    last ID_TESTIGO this process finished on (see read_last_id_testigo()) --
+    pass it explicitly only for a one-off backfill/dry run. On a normal run,
+    advances the saved ID_TESTIGO past every testigo seen this time regardless
+    of per-segment errors, so a permanently-failing segment doesn't stall
+    future runs retrying it forever."""
     global _progress_done
     resumed = id_testigo_min is None
     if resumed:
@@ -531,10 +421,9 @@ def main(id_testigo_min: int | None = None) -> None:
     logger.info(f"id_testigo_min={id_testigo_min}: found {total} segment(s) to process")
     _progress_done = 0
 
-    # Every segment fetched this run gets its testigo counted toward the saved
-    # position regardless of processing outcome -- computed upfront over the
-    # whole batch (order-independent) rather than incrementally per-segment,
-    # since segments are no longer necessarily processed in order.
+    # Computed upfront over the whole batch since segments process out of
+    # order under concurrency -- every fetched segment counts toward the
+    # saved position regardless of outcome.
     max_id_testigo = max([id_testigo_min - 1] + [s["ID_TESTIGO"] for s in segments])
 
     if segments:

@@ -5,15 +5,7 @@ ARCHIVO/callsign matches a given filter), crops + transcribes + runs
 brand-mention detection on each exactly like src/tool2.py's process(), and
 writes the results to a .txt file.
 
-Never calls save_mentions() -- no DB writes happen. Safe to run repeatedly
-while MENCIONES_COMERCIALES still doesn't exist (DB write access is still
-blocked, see docs/progress.md).
-
-DEBUG (temporary, 2026-09-09): every detected mention also gets its exact
-audio span *and* a padded surrounding-context clip cut out and saved locally
-under DEBUG_MENTIONS_DIR (see src/tool2.py), so a detection can be judged by
-ear -- including whether the music actually ducks down for a real ad read --
-rather than trusted from the transcript alone.
+Never calls save_mentions() -- no DB writes happen.
 
 Usage: tool2_test.exe [stations] [id_testigo_min] [limit] [output_path]
   stations       defaults to "all" (matches src/tool2.py's real production
@@ -40,7 +32,6 @@ from src.tool2 import (
     TOOL2_ESTATUS_IDS,
     TOOL2_TESTIGO_ESTATUS_IDS,
     crop_segment,
-    save_mention_debug_clips,
 )
 
 DEFAULT_STATIONS = None
@@ -128,7 +119,6 @@ def process_segment(segment: dict) -> dict:
         segments = transcribe_timestamped_segments(clip_path)
         transcript = " ".join(s["text"] for s in segments)
         mentions = extract_brand_mentions(segments)
-        save_mention_debug_clips(segment["RUTA"], segment, mentions)
     finally:
         os.remove(clip_path)
 
