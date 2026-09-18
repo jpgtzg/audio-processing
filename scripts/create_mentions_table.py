@@ -8,13 +8,13 @@ Columns:
     ID_MENCION            identity PK
     ID_SEGMENTO/ID_TESTIGO source SEGMENTO_SARA row this mention came from
     ID_ESTATUS_SEGMENTO   which discard reason triggered detection -- see
-                           src/tool2.py TOOL2_ESTATUS_IDS (10 codes as of
+                           src/tool2 TOOL2_ESTATUS_IDS (10 codes as of
                            2026-09-17, client-expanded from the original 3)
     MOTIVO_DESCARTE        human-readable version of ID_ESTATUS_SEGMENTO,
                            pulled live from CAT_ESTATUS_SEGMENTO.DESCRIPCION
-                           (see src/tool2.py get_motivo_descarte_labels()) so
+                           (see src/tool2 get_motivo_descarte_labels()) so
                            this is readable without joining back to the catalog
-    TITULO                 currently reuses MARCA (see src/tool2.py save_mentions())
+    TITULO                 currently reuses MARCA (see src/tool2 save_mentions())
     ANUNCIANTE/MARCA       raw text Whisper extraction detected -- kept even when
                            NUM_ANUNC/NUM_MARCA below has no confident match, so a
                            capturista can still see/link the mention manually
@@ -78,7 +78,7 @@ COLUMN_MIGRATIONS: list[tuple[str, str]] = [
 #
 # MOTIVO_DESCARTE was VARCHAR(20), sized for the original 3 short hardcoded
 # labels ("LOCUTOR"/"NOTICIERO"/"CANCION"). Since 2026-09-17 it's populated
-# live from CAT_ESTATUS_SEGMENTO.DESCRIPCION instead (see src/tool2.py
+# live from CAT_ESTATUS_SEGMENTO.DESCRIPCION instead (see src/tool2
 # get_motivo_descarte_labels()), which runs up to 38 chars (e.g. "Descarte
 # automático (Duracion Mínima)") -- caused a live "String or binary data
 # would be truncated" INSERT failure the first time a long one came through.

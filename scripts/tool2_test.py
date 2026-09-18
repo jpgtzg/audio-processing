@@ -2,13 +2,13 @@
 
 Pulls up to `limit` discarded segments (optionally narrowed to stations whose
 ARCHIVO/callsign matches a given filter), crops + transcribes + runs
-brand-mention detection on each exactly like src/tool2.py's process(), and
+brand-mention detection on each exactly like src/tool2's process(), and
 writes the results to a .txt file.
 
 Never calls save_mentions() -- no DB writes happen.
 
 Usage: tool2_test.exe [stations] [id_testigo_min] [limit] [output_path]
-  stations       defaults to "all" (matches src/tool2.py's real production
+  stations       defaults to "all" (matches src/tool2's real production
                   scope -- no station filter beyond EMISORAS_MENCION opt-in).
                   Pass a callsign substring (e.g. "XHLUPE") to narrow a dry
                   run to one station being piloted -- matched against
@@ -46,14 +46,14 @@ def fetch_segments(
     estatus_ids: list[int] = TOOL2_ESTATUS_IDS,
     testigo_estatus_ids: list[int] = TOOL2_TESTIGO_ESTATUS_IDS,
 ) -> list[dict]:
-    """Same query as src/tool2.py's fetch_discarded_segments(), capped at
+    """Same query as src/tool2's fetch_discarded_segments(), capped at
     `limit` distinct *testigos* (one segment each) rather than `limit`
     segments -- SEGMENTO_SARA has many segments per testigo, so capping on
     segments alone tends to sample the same handful of source files
     repeatedly instead of a diverse set worth checking file-by-file.
 
     stations=None matches every EMISORAS_MENCION-opted-in station, same as
-    src/tool2.py's real production scope -- pass an explicit list of callsign
+    src/tool2's real production scope -- pass an explicit list of callsign
     substrings (matched against TESTIGO_SARA.ARCHIVO) to narrow a dry run to
     one station being piloted, e.g. the client's XHLUPE test case."""
     station_filter = (
@@ -108,7 +108,7 @@ def fetch_segments(
 
 
 def process_segment(segment: dict) -> dict:
-    """Same as src/tool2.py's process(), but returns the transcript alongside
+    """Same as src/tool2's process(), but returns the transcript alongside
     the mentions (instead of just mentions) so the .txt output can show both,
     and never touches the DB beyond the initial read."""
     clip_path = crop_segment(

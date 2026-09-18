@@ -171,6 +171,8 @@ Once `client_data/real_audio_db/` existed with real `INICIO`/`DURACION` values, 
 
 Tool 2 finds embedded brand-mention "spots" hiding inside content SARA's own pipeline already discarded as non-commercial (song, locutor chatter, newscast, etc.) — not the `ALTAS_SARA_FP` alta queue Tool 1 uses. Deployed and running live on SaraAlt against the client's real production DB. For delivery status/history, see `docs/progress.md`; this section is the current architecture only.
 
+Lives in `src/tool2/` (a package, not a single file), split by concern: `constants.py`, `logging_setup.py`, `queries.py` (all DB access), `crop.py`, `pipeline.py` (`process()`), `checkpoint.py` (local resume-position state), `service.py` (`main()`/`run_forever()`/concurrency), `cli.py` (shared by `run_tool2.py` and `python -m src.tool2`). `src/tool2/__init__.py` re-exports the full public surface, so `from src.tool2 import X` still works the same as before the split.
+
 **Scope**: runs only against stations opted in via `EMISORAS_MENCION` (`MENCIONES = 1`), starting from that station's own `FECHA_MENCION` control date — lets the client roll this out station-by-station rather than all at once.
 
 **Source rows**: `SEGMENTO_SARA` rows discarded under one of the codes in `TOOL2_ESTATUS_IDS` (human-readable labels pulled live from `CAT_ESTATUS_SEGMENTO`, not hardcoded, via `get_motivo_descarte_labels()`), whose parent testigo has finished SARA's own backup/archival process (`ID_ESTATUS_TESTIGO IN (10, 20)`).
