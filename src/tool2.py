@@ -429,6 +429,34 @@ _progress_lock = threading.Lock()
 _progress_done = 0
 
 
+def _segment_already_recorded(id_segmento: int) -> bool:
+    """Whether ID_SEGMENTO already has at least one row in
+    MENCIONES_COMERCIALES. The saved position (LAST_ID_TESTIGO_FILE) only
+    advances once per *entire batch*, after every segment in it has been
+    attempted (see main()) -- so killing the process mid-batch (Ctrl+C, a
+    crash, a restart to pick up a new build) means the next run resumes from
+    the same starting point and re-fetches the whole batch, including
+    segments that were already fully processed and inserted last time.
+    save_mentions() is a plain INSERT with no dedup key, so without this
+    check a segment that already found a real mention would get duplicate
+    rows on every restart that happens mid-batch. Called before the expensive
+    transcription/extraction work, not just before the insert, so a repeat
+    segment is also cheap to skip, not just safe to skip.
+
+    Doesn't catch every case: a segment that was fully processed but found
+    zero mentions has no row to check against, so it'll still be
+    reprocessed (wasted work, but not harmful -- nothing gets inserted
+    either way unless that rerun genuinely finds something new)."""
+    with engine.connect() as conn:
+        return (
+            conn.execute(
+                text("SELECT TOP 1 1 FROM MENCIONES_COMERCIALES WHERE ID_SEGMENTO = :id_segmento"),
+                {"id_segmento": id_segmento},
+            ).scalar()
+            is not None
+        )
+
+
 def _process_one_segment(segment: dict, total: int) -> None:
     """Runs process() + save_mentions() for a single segment and logs the
     outcome, swallowing (never re-raising) any failure -- factored out of
@@ -441,6 +469,11 @@ def _process_one_segment(segment: dict, total: int) -> None:
         done = _progress_done
 
     label = f"ID_SEGMENTO={segment['ID_SEGMENTO']}"
+
+    if _segment_already_recorded(segment["ID_SEGMENTO"]):
+        logger.info(f"[{done}/{total}] {label}: already has mention(s) recorded, skipping")
+        return
+
     logger.info(f"[{done}/{total}] Processing segment: {label}")
 
     try:
