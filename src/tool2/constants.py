@@ -1,11 +1,11 @@
 import os
 
-LAST_ID_TESTIGO_FILE = os.environ.get("TOOL2_LAST_ID_TESTIGO_FILE", "tool2_last_id_testigo.txt")
-POLL_INTERVAL_SECONDS = int(os.environ.get("TOOL2_POLL_INTERVAL_SECONDS", 60 * 60))
-# Segments are processed concurrently (see service.main()) -- the pipeline is
-# I/O-bound (API calls, network file reads, DB writes), so this overlaps wait
-# time without needing more CPU. Kept modest by default to stay under OpenAI
-# per-account rate limits and SQLAlchemy's default connection pool size.
+LAST_ID_TESTIGO_FILE = os.environ.get(
+    "TOOL2_LAST_ID_TESTIGO_FILE", "tool2_last_id_testigo.txt"
+)
+POLL_INTERVAL_SECONDS = int(
+    os.environ.get("TOOL2_POLL_INTERVAL_SECONDS", float(60 * 60))
+)
 MAX_WORKERS = int(os.environ.get("TOOL2_MAX_WORKERS", 5))
 
 ESTATUS_DESCARTADO_LOCUTOR: int = 10
