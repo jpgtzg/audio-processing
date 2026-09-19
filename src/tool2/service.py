@@ -61,19 +61,15 @@ def _process_one_segment(segment: dict, total: int) -> None:
         )
 
 
-def main(id_testigo_min: int | None = None) -> None:
-    """Runs once over every discarded segment with ID_TESTIGO >= id_testigo_min,
+def main() -> None:
+    """Runs once over every discarded segment with ID_TESTIGO >= the last
+    ID_TESTIGO this process finished on (see checkpoint.read_last_id_testigo()),
     processing up to MAX_WORKERS segments concurrently (see
-    _process_one_segment()). If id_testigo_min isn't given, resumes from the
-    last ID_TESTIGO this process finished on (see checkpoint.read_last_id_testigo())
-    -- pass it explicitly only for a one-off backfill/dry run. On a normal run,
-    advances the saved ID_TESTIGO past every testigo seen this time regardless
-    of per-segment errors, so a permanently-failing segment doesn't stall
-    future runs retrying it forever."""
+    _process_one_segment()). Advances the saved ID_TESTIGO past every testigo
+    seen this time regardless of per-segment errors, so a permanently-failing
+    segment doesn't stall future runs retrying it forever."""
     global _progress_done
-    resumed = id_testigo_min is None
-    if resumed:
-        id_testigo_min = checkpoint.read_last_id_testigo()
+    id_testigo_min = checkpoint.read_last_id_testigo()
 
     segments = fetch_discarded_segments(id_testigo_min=id_testigo_min)
     total = len(segments)
@@ -89,8 +85,7 @@ def main(id_testigo_min: int | None = None) -> None:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             list(executor.map(lambda s: _process_one_segment(s, total), segments))
 
-    if resumed:
-        checkpoint.write_last_id_testigo(max_id_testigo + 1)
+    checkpoint.write_last_id_testigo(max_id_testigo + 1)
 
 
 def run_forever(poll_interval_seconds: int = POLL_INTERVAL_SECONDS) -> None:
@@ -112,22 +107,16 @@ def run_forever(poll_interval_seconds: int = POLL_INTERVAL_SECONDS) -> None:
 
 def run(argv: list[str]) -> None:
     """Shared CLI entrypoint for both `python -m src.tool2` and the packaged
-    tool2.exe (see run_tool2.py). With one argument: runs once, seeding/
-    overriding the saved ID_TESTIGO -- use for a one-off backfill or to
-    establish the first starting point. With no argument: runs forever as a
-    service, polling on an interval and resuming from the saved ID_TESTIGO
-    each cycle."""
-    if len(argv) > 1:
+    tool2.exe (see run_tool2.py). Runs forever as a service, polling on an
+    interval and always resuming from the saved ID_TESTIGO
+    (checkpoint.read_last_id_testigo()) each cycle. Takes no arguments --
+    to change the starting point, edit LAST_ID_TESTIGO_FILE directly."""
+    if argv:
         raise SystemExit(
-            "usage: tool2 [id_testigo_min]\n"
-            "With an argument: runs once, seeding/overriding the saved ID_TESTIGO "
-            f"({LAST_ID_TESTIGO_FILE}) -- use this for a one-off backfill or to "
-            "establish the very first starting point.\n"
-            "With no argument: runs forever as a service, polling every "
-            f"{POLL_INTERVAL_SECONDS}s (override via TOOL2_POLL_INTERVAL_SECONDS) "
-            "and resuming from the saved ID_TESTIGO each cycle."
+            "usage: tool2\n"
+            f"Runs forever as a service, polling every {POLL_INTERVAL_SECONDS}s "
+            "(override via TOOL2_POLL_INTERVAL_SECONDS) and always resuming from "
+            f"the saved ID_TESTIGO ({LAST_ID_TESTIGO_FILE}) each cycle. To change "
+            "the starting point, edit that file directly."
         )
-    if len(argv) == 1:
-        main(id_testigo_min=int(argv[0]))
-    else:
-        run_forever()
+    run_forever()
