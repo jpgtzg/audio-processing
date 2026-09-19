@@ -104,7 +104,9 @@ def segment_already_recorded(id_segmento: int) -> bool:
     with engine.connect() as conn:
         return (
             conn.execute(
-                text("SELECT TOP 1 1 FROM MENCIONES_COMERCIALES WHERE ID_SEGMENTO = :id_segmento"),
+                text(
+                    "SELECT TOP 1 1 FROM MENCIONES_COMERCIALES WHERE ID_SEGMENTO = :id_segmento"
+                ),
                 {"id_segmento": id_segmento},
             ).scalar()
             is not None
@@ -112,8 +114,7 @@ def segment_already_recorded(id_segmento: int) -> bool:
 
 
 def save_mentions(mentions: list[dict]) -> None:
-    """Inserts detected brand mentions into MENCIONES_COMERCIALES (see
-    scripts/create_mentions_table.py to create/migrate the table).
+    """Inserts detected brand mentions into MENCIONES_COMERCIALES.
 
     ANUNCIANTE/MARCA carry the raw text Whisper extraction detected, kept even
     when it doesn't match anything in the catalogs so a capturista can still

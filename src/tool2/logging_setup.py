@@ -6,9 +6,6 @@ LOG_FILE = os.environ.get("TOOL2_LOG_FILE", "tool2.log")
 logger = logging.getLogger("tool2")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
-    # Guards against duplicate handlers (and duplicate log lines) if this
-    # module gets imported more than once in the same process, e.g. from
-    # scripts/tool2_test.py.
     _formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     _console_handler = logging.StreamHandler()
     _console_handler.setFormatter(_formatter)
@@ -18,8 +15,6 @@ if not logger.handlers:
         _file_handler.setFormatter(_formatter)
         logger.addHandler(_file_handler)
     except OSError:
-        # Don't let an unwritable log directory take down the whole service --
-        # console logging alone still works.
         logger.warning(f"could not open log file {LOG_FILE!r}, file logging disabled")
 
 
