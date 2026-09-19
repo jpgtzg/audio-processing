@@ -8,14 +8,14 @@ Split into submodules by concern:
     queries        -- all DB reads/writes (SEGMENTO_SARA, MENCIONES_COMERCIALES)
     crop           -- audio cropping/channel isolation
     pipeline       -- the per-segment transcribe + extract pipeline
-    checkpoint     -- local last-processed-testigo state file
+    progress       -- last-processed-segment checkpoint state file, plus
+                       per-segment completion tracking for one fetched batch
     service        -- orchestration: concurrent processing, the polling loop,
                        and the shared CLI entrypoint for run_tool2.py / `python -m src.tool2`
 
 Re-exports the full previous flat-module API below so existing imports
 (`from src.tool2 import X`) keep working unchanged."""
 
-from src.tool2.checkpoint import read_last_id_testigo, write_last_id_testigo
 from src.tool2.constants import (
     ESTATUS_DESCARTADO_ALTAS_AUTOMATICAS,
     ESTATUS_DESCARTADO_AUDITORIA,
@@ -27,7 +27,7 @@ from src.tool2.constants import (
     ESTATUS_DESCARTADO_NAC,
     ESTATUS_DESCARTADO_NOTICIERO,
     ESTATUS_DESCARTADO_REGLA,
-    LAST_ID_TESTIGO_FILE,
+    LAST_ID_SEGMENTO_FILE,
     MAX_WORKERS,
     POLL_INTERVAL_SECONDS,
     TESTIGO_ESTATUS_BORRADO,
@@ -38,8 +38,13 @@ from src.tool2.constants import (
 from src.tool2.crop import crop_segment
 from src.tool2.logging_setup import LOG_FILE, format_exception_detail, logger
 from src.tool2.pipeline import process
+from src.tool2.progress import (
+    BatchProgress,
+    read_last_id_segmento,
+    write_last_id_segmento,
+)
 from src.tool2.queries import (
-    current_max_id_testigo,
+    current_max_id_segmento,
     fetch_discarded_segments,
     get_motivo_descarte_labels,
     save_mentions,
@@ -48,7 +53,7 @@ from src.tool2.queries import (
 from src.tool2.service import _process_one_segment, main, run, run_forever
 
 # Old underscore-prefixed names, kept as aliases for backward compatibility.
-_current_max_id_testigo = current_max_id_testigo
+_current_max_id_segmento = current_max_id_segmento
 _segment_already_recorded = segment_already_recorded
 _format_exception_detail = format_exception_detail
 
@@ -57,7 +62,7 @@ __all__ = [
     "logger",
     "format_exception_detail",
     "_format_exception_detail",
-    "LAST_ID_TESTIGO_FILE",
+    "LAST_ID_SEGMENTO_FILE",
     "POLL_INTERVAL_SECONDS",
     "MAX_WORKERS",
     "ESTATUS_DESCARTADO_LOCUTOR",
@@ -79,10 +84,11 @@ __all__ = [
     "crop_segment",
     "process",
     "save_mentions",
-    "current_max_id_testigo",
-    "_current_max_id_testigo",
-    "read_last_id_testigo",
-    "write_last_id_testigo",
+    "BatchProgress",
+    "current_max_id_segmento",
+    "_current_max_id_segmento",
+    "read_last_id_segmento",
+    "write_last_id_segmento",
     "segment_already_recorded",
     "_segment_already_recorded",
     "_process_one_segment",

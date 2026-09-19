@@ -1,7 +1,7 @@
 import os
 
-LAST_ID_TESTIGO_FILE = os.environ.get(
-    "TOOL2_LAST_ID_TESTIGO_FILE", "tool2_last_id_testigo.txt"
+LAST_ID_SEGMENTO_FILE = os.environ.get(
+    "TOOL2_LAST_ID_SEGMENTO_FILE", "tool2_last_id_segmento.txt"
 )
 POLL_INTERVAL_SECONDS = int(
     os.environ.get("TOOL2_POLL_INTERVAL_SECONDS", float(60 * 60))

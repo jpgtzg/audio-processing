@@ -27,7 +27,7 @@ def get_motivo_descarte_labels() -> dict[int, str]:
 def fetch_discarded_segments(
     estatus_ids: list[int] = TOOL2_ESTATUS_IDS,
     testigo_estatus_ids: list[int] = TOOL2_TESTIGO_ESTATUS_IDS,
-    id_testigo_min: int | None = None,
+    id_segmento_min: int | None = None,
 ) -> list[dict]:
     """SEGMENTO_SARA rows discarded for one of the given ID_ESTATUS_SEGMENTO
     reasons, joined to resolve a playable clip's path (RUTA) and channel
@@ -46,8 +46,13 @@ def fetch_discarded_segments(
       doubling every segment. The returned TESTIGO_SARA.CANAL is what
       actually tells crop_segment() which channel to isolate from the audio.
 
+    Ordered by ID_SEGMENTO ascending: service.py's BatchProgress relies on
+    this to compute a safe segment-level checkpoint (see progress.py) --
+    ThreadPoolExecutor.map() starts tasks strictly in this order, so a
+    completed prefix of the ordered list is always safe to check-point past.
+
     SEGMENTO_SARA is 100M+ rows (12M+ for song-discard alone) -- always pass
-    id_testigo_min (or add another bound) rather than pulling the whole table."""
+    id_segmento_min (or add another bound) rather than pulling the whole table."""
     query = text(
         r"""
         SELECT s.ID_SEGMENTO, s.ID_TESTIGO, s.ID_ESTATUS_SEGMENTO, s.INICIO, s.DURACION,
@@ -64,7 +69,8 @@ def fetch_discarded_segments(
           AND ee.MENCIONES = 1
           AND ee.FECHA_MENCION IS NOT NULL
           AND ee.FECHA_MENCION <= t.FECHA_INICIO
-          AND (:id_testigo_min IS NULL OR s.ID_TESTIGO >= :id_testigo_min)
+          AND (:id_segmento_min IS NULL OR s.ID_SEGMENTO >= :id_segmento_min)
+        ORDER BY s.ID_SEGMENTO ASC
         """
     ).bindparams(
         bindparam("estatus_ids", expanding=True),
@@ -78,7 +84,7 @@ def fetch_discarded_segments(
                 {
                     "estatus_ids": list(estatus_ids),
                     "testigo_estatus_ids": list(testigo_estatus_ids),
-                    "id_testigo_min": id_testigo_min,
+                    "id_segmento_min": id_segmento_min,
                 },
             )
             .mappings()
@@ -89,12 +95,14 @@ def fetch_discarded_segments(
 
 def segment_already_recorded(id_segmento: int) -> bool:
     """Whether ID_SEGMENTO already has at least one row in
-    MENCIONES_COMERCIALES. checkpoint.LAST_ID_TESTIGO_FILE only advances once
-    per entire batch (see service.main()), so a process killed mid-batch
-    resumes from the same starting point next time and re-fetches segments
-    already processed; save_mentions() is a plain INSERT with no dedup key.
-    Called before the expensive transcription/extraction work, not just
-    before the insert, so a repeat segment is cheap to skip, not just safe
+    MENCIONES_COMERCIALES. checkpoint.LAST_ID_SEGMENTO_FILE only advances past
+    a segment once it's actually finished (see progress.BatchProgress /
+    service._process_one_segment()), so this mainly protects against a race
+    where a segment's checkpoint write landed but the process died before
+    exiting cleanly, or a manual re-run with an older checkpoint; save_mentions()
+    is a plain INSERT with no dedup key. Called before the expensive
+    transcription/extraction work, not just before the insert, so a repeat
+    segment is cheap to skip, not just safe
     to skip.
 
     Doesn't catch a segment that was processed but found zero mentions (no
@@ -170,9 +178,9 @@ def save_mentions(mentions: list[dict]) -> None:
         conn.commit()
 
 
-def current_max_id_testigo() -> int:
-    """Live MAX(ID_TESTIGO) in TESTIGO_SARA -- used to seed the saved position
-    the very first time the service runs, so it starts watching from "now"
-    instead of backfilling the entire history."""
+def current_max_id_segmento() -> int:
+    """Live MAX(ID_SEGMENTO) in SEGMENTO_SARA -- used to seed the saved
+    position the very first time the service runs, so it starts watching from
+    "now" instead of backfilling the entire history."""
     with engine.connect() as conn:
-        return conn.execute(text("SELECT MAX(ID_TESTIGO) FROM TESTIGO_SARA")).scalar()
+        return conn.execute(text("SELECT MAX(ID_SEGMENTO) FROM SEGMENTO_SARA")).scalar()
