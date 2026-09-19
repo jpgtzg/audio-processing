@@ -9,8 +9,8 @@ Split into submodules by concern:
     crop           -- audio cropping/channel isolation
     pipeline       -- the per-segment transcribe + extract pipeline
     checkpoint     -- local last-processed-testigo state file
-    service        -- orchestration: concurrent processing, the polling loop
-    cli            -- shared argument parsing for run_tool2.py / `python -m src.tool2`
+    service        -- orchestration: concurrent processing, the polling loop,
+                       and the shared CLI entrypoint for run_tool2.py / `python -m src.tool2`
 
 Re-exports the full previous flat-module API below so existing imports
 (`from src.tool2 import X`) keep working unchanged."""
@@ -45,7 +45,7 @@ from src.tool2.queries import (
     save_mentions,
     segment_already_recorded,
 )
-from src.tool2.service import _process_one_segment, main, run_forever
+from src.tool2.service import _process_one_segment, main, run, run_forever
 
 # Old underscore-prefixed names, kept as aliases for backward compatibility.
 _current_max_id_testigo = current_max_id_testigo
@@ -87,5 +87,6 @@ __all__ = [
     "_segment_already_recorded",
     "_process_one_segment",
     "main",
+    "run",
     "run_forever",
 ]

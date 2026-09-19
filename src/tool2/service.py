@@ -3,10 +3,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from src.tool2 import checkpoint
-from src.tool2.constants import MAX_WORKERS, POLL_INTERVAL_SECONDS
+from src.tool2.constants import LAST_ID_TESTIGO_FILE, MAX_WORKERS, POLL_INTERVAL_SECONDS
 from src.tool2.logging_setup import format_exception_detail, logger
 from src.tool2.pipeline import process
-from src.tool2.queries import fetch_discarded_segments, save_mentions, segment_already_recorded
+from src.tool2.queries import (
+    fetch_discarded_segments,
+    save_mentions,
+    segment_already_recorded,
+)
 
 _progress_lock = threading.Lock()
 _progress_done = 0
@@ -26,7 +30,9 @@ def _process_one_segment(segment: dict, total: int) -> None:
     label = f"ID_SEGMENTO={segment['ID_SEGMENTO']}"
 
     if segment_already_recorded(segment["ID_SEGMENTO"]):
-        logger.info(f"[{done}/{total}] {label}: already has mention(s) recorded, skipping")
+        logger.info(
+            f"[{done}/{total}] {label}: already has mention(s) recorded, skipping"
+        )
         return
 
     logger.info(f"[{done}/{total}] Processing segment: {label}")
@@ -37,13 +43,6 @@ def _process_one_segment(segment: dict, total: int) -> None:
         logger.info(f"[{done}/{total}] {label}: recording not reachable, skipping")
         return
     except Exception as e:
-        # Any other per-segment failure (corrupt/locked file, decode error,
-        # OS-level path errors, transient share hiccups, API errors, etc.)
-        # must not abort the whole run -- main() advances max_id_testigo past
-        # every segment attempted this run regardless of outcome, so a
-        # permanently-failing segment doesn't stall future runs retrying it
-        # forever. Log the full traceback plus whatever extra detail the
-        # exception carries (see format_exception_detail()) and move on.
         logger.error(
             f"[{done}/{total}] {label}: processing failed ({format_exception_detail(e)}), skipping",
             exc_info=True,
@@ -109,3 +108,26 @@ def run_forever(poll_interval_seconds: int = POLL_INTERVAL_SECONDS) -> None:
                 exc_info=True,
             )
         time.sleep(poll_interval_seconds)
+
+
+def run(argv: list[str]) -> None:
+    """Shared CLI entrypoint for both `python -m src.tool2` and the packaged
+    tool2.exe (see run_tool2.py). With one argument: runs once, seeding/
+    overriding the saved ID_TESTIGO -- use for a one-off backfill or to
+    establish the first starting point. With no argument: runs forever as a
+    service, polling on an interval and resuming from the saved ID_TESTIGO
+    each cycle."""
+    if len(argv) > 1:
+        raise SystemExit(
+            "usage: tool2 [id_testigo_min]\n"
+            "With an argument: runs once, seeding/overriding the saved ID_TESTIGO "
+            f"({LAST_ID_TESTIGO_FILE}) -- use this for a one-off backfill or to "
+            "establish the very first starting point.\n"
+            "With no argument: runs forever as a service, polling every "
+            f"{POLL_INTERVAL_SECONDS}s (override via TOOL2_POLL_INTERVAL_SECONDS) "
+            "and resuming from the saved ID_TESTIGO each cycle."
+        )
+    if len(argv) == 1:
+        main(id_testigo_min=int(argv[0]))
+    else:
+        run_forever()
