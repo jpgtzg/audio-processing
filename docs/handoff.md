@@ -149,12 +149,12 @@ Once `client_data/real_audio_db/` existed with real `INICIO`/`DURACION` values, 
 | `src/audio.py` | Whisper transcription with the windowing + fuzzy-stitch fix described above. This is the production transcription path. |
 | `src/extraction.py` | Title/keyword generation via LLM — unchanged, still usable. |
 | `src/tool1.py` | Reads every `.wav`/`.mp3` in `client_data/wav2`, transcribes (no DB crop, no vocabulary prompt — transcripts are intentionally left "bare" since the windowing fix already improved accuracy without needing steering), extracts spot details, writes results. `main()` currently prints per-file rather than writing a CSV (a prior concurrent/CSV-writing version exists in git history if needed again). |
-| `src/db/db.py`, `src/db/base.py` | SQLAlchemy engine + declarative base for DB access, still used by `scripts/` (renamed from `bootstrap/` during a repo cleanup, 2026-08-17). |
-| `scripts/match_wav2_to_db.py` | One-off: matches `client_data/wav2` files to `ALTAS_SARA_FP` rows via `DETALLE`, builds `client_data/real_audio_db/` + manifest. |
-| `scripts/crop_sample.py` | Diagnostic: random-samples `real_audio_db` crops for manual listening. |
-| `scripts/create_mentions_table.py` | Creates Tool 2's output table `MENCIONES_COMERCIALES` — written, not yet run (blocked, see `docs/progress.md`). |
+| `src/db/db.py`, `src/db/base.py` | SQLAlchemy engine + declarative base for DB access. |
+| `src/tool2/service.py` | Tool 2's orchestration: `main()`/`run_forever()`/concurrency, plus `run()`, the shared CLI entrypoint (merged in from a former standalone `cli.py`, 2026-09-19). |
 
 **Removed in a repo cleanup (2026-08-30), all confirmed to have zero remaining callers**: `src/segmentation.py`/`slicing.py` (no longer needed for Tool 1 — clips arrive pre-cropped, already noted above); `scripts/extract_spots.py` (older bootstrap script, superseded by `client_data/wav2`, and had bit-rotted — imported a `SpotDetails` type that no longer existed) plus its now-orphaned `scripts/freetds.conf` copy; `audio.py`'s `remove_silence()` (part of the old boundary-detection pipeline, unused since clips arrive pre-cropped).
+
+**`scripts/` removed entirely (2026-09-19)**: the whole directory is gone, along with its PyInstaller entry points and CI build steps. Removed: `scripts/smoke_test.py`/`run_smoke_test.py` (SaraAlt DB+share connectivity check, packaged as `smoke_test.exe`), `scripts/tool2_test.py`/`run_tool2_test.py` (read-only Tool 2 dry run, packaged as `tool2_test.exe`), `scripts/create_mentions_table.py`/`run_create_mentions_table.py` (creates/migrates `MENCIONES_COMERCIALES`, packaged as `create_mentions_table.exe`), `scripts/match_wav2_to_db.py` (one-off `client_data/wav2` ↔ `ALTAS_SARA_FP` matcher), and `scripts/crop_sample.py` (crop-diagnostic listening tool). The corresponding Windows CI build/upload steps in `.github/workflows/build-windows.yml` were removed alongside them, so only `tool1.exe`/`tool2.exe` are built now. **Worth confirming with the client/operator**: `create_mentions_table.exe` was the only way to run the `MOTIVO_DESCARTE` column-widening migration (see `docs/progress.md`, 2026-09-17 entry) against production — if that migration was never actually run there, it now has no packaged tool to run it with.
 
 ## Open questions for the client
 
@@ -171,7 +171,7 @@ Once `client_data/real_audio_db/` existed with real `INICIO`/`DURACION` values, 
 
 Tool 2 finds embedded brand-mention "spots" hiding inside content SARA's own pipeline already discarded as non-commercial (song, locutor chatter, newscast, etc.) — not the `ALTAS_SARA_FP` alta queue Tool 1 uses. Deployed and running live on SaraAlt against the client's real production DB. For delivery status/history, see `docs/progress.md`; this section is the current architecture only.
 
-Lives in `src/tool2/` (a package, not a single file), split by concern: `constants.py`, `logging_setup.py`, `queries.py` (all DB access), `crop.py`, `pipeline.py` (`process()`), `checkpoint.py` (local resume-position state), `service.py` (`main()`/`run_forever()`/concurrency), `cli.py` (shared by `run_tool2.py` and `python -m src.tool2`). `src/tool2/__init__.py` re-exports the full public surface, so `from src.tool2 import X` still works the same as before the split.
+Lives in `src/tool2/` (a package, not a single file), split by concern: `constants.py`, `logging_setup.py`, `queries.py` (all DB access), `crop.py`, `pipeline.py` (`process()`), `checkpoint.py` (local resume-position state), `service.py` (`main()`/`run_forever()`/concurrency, plus `run()`, the shared CLI entrypoint used by both `run_tool2.py` and `python -m src.tool2` -- merged in from a former standalone `cli.py`, 2026-09-19). `src/tool2/__init__.py` re-exports the full public surface, so `from src.tool2 import X` still works the same as before the split.
 
 **Scope**: runs only against stations opted in via `EMISORAS_MENCION` (`MENCIONES = 1`), starting from that station's own `FECHA_MENCION` control date — lets the client roll this out station-by-station rather than all at once.
 
