@@ -39,9 +39,11 @@ jobs:
         with:
           name: tool1-windows
           path: dist/tool1.exe
+          retention-days: 7
 
       - name: Upload tool2.exe
         uses: actions/upload-artifact@v4
         with:
           name: tool2-windows
           path: dist/tool2.exe
+          retention-days: 7
