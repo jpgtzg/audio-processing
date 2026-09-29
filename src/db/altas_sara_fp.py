@@ -47,16 +47,9 @@ class AltasSaraFP(Base):
         )
 
     def compute_clip_times(self, fecha_inicio: datetime, range_start: datetime) -> tuple[float, float]:
-        """
-        Computes the start and end times of the clip within a combined-track timeline.
-
-        Args:
-            fecha_inicio: capture start of this alta's parent TESTIGO_SARA row.
-            range_start: capture start of the first testigo in the combined track.
-
-        Returns:
-            tuple[float, float]: clip start and end, in seconds from range_start.
-        """
+        """Clip start/end, in seconds from range_start, within a combined-track
+        timeline -- fecha_inicio is this alta's parent TESTIGO_SARA row's capture
+        start, range_start is the first testigo's in the combined track."""
         testigo_offset = (fecha_inicio - range_start).total_seconds()
         offset_ini = self.offset_ini or 0
         offset_fin = self.offset_fin or 0

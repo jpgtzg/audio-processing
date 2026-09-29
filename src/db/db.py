@@ -1,7 +1,6 @@
 import os
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from src.db.settings import settings
 
@@ -23,5 +22,3 @@ engine = create_engine(
     f"mssql+pymssql://{settings.DB_LOGIN}:{settings.DB_PASSWORD}"
     f"@{_host}/{settings.DB_SERVER_DATABASE}"
 )
-
-Session = sessionmaker(bind=engine)
