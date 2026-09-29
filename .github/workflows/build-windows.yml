@@ -6,6 +6,9 @@ on:
     tags: ["v*"]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -34,20 +37,6 @@ jobs:
           --collect-all pymssql
           run_tool2.py
 
-      - name: Upload tool1.exe
-        uses: actions/upload-artifact@v4
-        with:
-          name: tool1-windows
-          path: dist/tool1.exe
-          retention-days: 7
-
-      - name: Upload tool2.exe
-        uses: actions/upload-artifact@v4
-        with:
-          name: tool2-windows
-          path: dist/tool2.exe
-          retention-days: 7
-
       - name: Build bench_local_whisper.exe
         run: >
           uv run pyinstaller --onefile --console --name bench_local_whisper
@@ -57,9 +46,14 @@ jobs:
           --collect-all ctranslate2
           run_bench_local_whisper.py
 
-      - name: Upload bench_local_whisper.exe
-        uses: actions/upload-artifact@v4
-        with:
-          name: bench-local-whisper-windows
-          path: dist/bench_local_whisper.exe
-          retention-days: 7
+      - name: Publish exes to a GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest-build --yes --cleanup-tag || true
+          gh release create latest-build \
+            dist/tool1.exe dist/tool2.exe dist/bench_local_whisper.exe \
+            --title "Latest build" \
+            --notes "Automated build from commit ${{ github.sha }}" \
+            --target ${{ github.sha }}
