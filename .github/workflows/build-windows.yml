@@ -47,3 +47,19 @@ jobs:
           name: tool2-windows
           path: dist/tool2.exe
           retention-days: 7
+
+      - name: Build bench_local_whisper.exe
+        run: >
+          uv run pyinstaller --onefile --console --name bench_local_whisper
+          --add-data "src/db/freetds.conf;src/db"
+          --collect-all pymssql
+          --collect-all faster_whisper
+          --collect-all ctranslate2
+          run_bench_local_whisper.py
+
+      - name: Upload bench_local_whisper.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-local-whisper-windows
+          path: dist/bench_local_whisper.exe
+          retention-days: 7
