@@ -69,7 +69,7 @@ def save_mentions(mentions: list[dict]) -> None:
                     "id_segmento": m["id_segmento"],
                     "id_testigo": m["id_testigo"],
                     "id_estatus_segmento": m["id_estatus_segmento"],
-                    "titulo": m.get("titulo") or m.get("marca"),
+                    "titulo": m.get("marca"),
                     "anunciante": m.get("anunciante"),
                     "marca": m.get("marca"),
                     "num_anunc": m.get("num_anunc"),

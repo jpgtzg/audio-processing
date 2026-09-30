@@ -88,7 +88,7 @@ def process_one_segment(
         save_mentions(results)
         for result in results:
             logger.info(
-                f"[{done}/{total}] {label}: {result['titulo']} ({result['anunciante']} / {result['marca']}) "
+                f"[{done}/{total}] {label}: {result['anunciante']} / {result['marca']} "
                 f"({result['start']:.2f}s-{result['end']:.2f}s)"
             )
     finally:
