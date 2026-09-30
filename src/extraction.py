@@ -252,11 +252,25 @@ brand name was said." A short spot can still be genuine — a quick "Beadaholiqu
 necesidades de mostacillas" is a real (if brief) ad because it pitches a use case and gives a way to act
 on it; a bare "Nike" dropped mid-sentence with nothing around it is not.
 
-For each real spot found, report:
-- "marca": the brand/product name as said.
-- "anunciante": the company behind it, if identifiable from the mention; otherwise reuse "marca".
+For each real spot found, report (every field below is REQUIRED — never null, never empty):
+- "titulo": a short descriptive title of what is being advertised (e.g. "Asesoría para reclamo de
+  pensión Ley 73").
+- "marca": the brand/product name as said. If the spot never names one, use a short descriptive label of
+  the product/service (e.g. "Asesoría de pensiones").
+- "anunciante": the company behind it, as said. If the business is never named, use a short descriptive
+  label of the kind of advertiser (e.g. "Despacho de asesoría en pensiones"). Do not invent a company
+  name that was not said.
 - "start_segment" / "end_segment": the indices (from the numbered list) of the first and last segment the
-  spot spans (the locutor's read itself, not the surrounding song/chatter it interrupts).
+  spot spans. The span must cover the **whole promotional block** — from where the pitch starts (the
+  introduction of the product/service/experts and its benefits or urgency) through the final call to
+  action (phone numbers, address, website) — not just the closing contact details. The locutor's read
+  only, not the surrounding song/chatter it interrupts.
+
+**A phone number, WhatsApp line, address, website, social handle, or promo code is a contact channel, not
+a brand or advertiser.** Never use one as "marca", "anunciante" or "titulo" (e.g. "WhatsApp 8112-7544" is
+not an advertiser). This also applies to interview-style sponsored segments (hosts talking with "experts"
+in the studio who pitch their service and repeat a call to action): report them as one spot with the
+whole segment as the span.
 
 Do not invent mentions. If the transcript is just music, silence, unrelated chatter, or brand names
 coming up without any actual advertising/promotional content around them, return an empty list.
@@ -318,7 +332,7 @@ almost certainly hallucinated too, not a real mention.
 Write all output text in Spanish (brand/product names should stay as mentioned in the transcript).
 
 Respond with JSON only, matching this shape:
-{"mentions": [{"marca": "...", "anunciante": "...", "start_segment": 0, "end_segment": 0}]}
+{"mentions": [{"titulo": "...", "marca": "...", "anunciante": "...", "start_segment": 0, "end_segment": 0}]}
 """
 
 
@@ -359,13 +373,16 @@ def extract_brand_mentions(segments: list[dict]) -> list[dict]:
             continue
         if not (0 <= start_idx < len(segments) and 0 <= end_idx < len(segments)):
             continue
-        detected_marca = mention.get("marca")
-        detected_anunciante = mention.get("anunciante")
+        titulo = (mention.get("titulo") or "").strip()
+        detected_marca = (mention.get("marca") or "").strip() or titulo
+        detected_anunciante = (mention.get("anunciante") or "").strip() or detected_marca
+        titulo = titulo or detected_marca
         num_marca, marca_score = match_marca(detected_marca)
         num_anunc, anunciante_score = match_anunciante(detected_anunciante)
 
         mentions.append(
             {
+                "titulo": titulo,
                 "marca": detected_marca,
                 "anunciante": detected_anunciante,
                 "num_marca": num_marca,
