@@ -81,6 +81,42 @@ def main(argv: list[str]) -> None:
             ).scalar(),
         )
         step(
+            "session options (ansi_nulls, quoted_identifier, concat_null_yields_null, arithabort)",
+            lambda: tuple(
+                conn.execute(
+                    text(
+                        "SELECT SESSIONPROPERTY('ANSI_NULLS'), SESSIONPROPERTY('QUOTED_IDENTIFIER'), "
+                        "SESSIONPROPERTY('CONCAT_NULL_YIELDS_NULL'), SESSIONPROPERTY('ARITHABORT')"
+                    )
+                ).one()
+            ),
+        )
+        step(
+            "proc stored settings (uses_ansi_nulls, uses_quoted_identifier)",
+            lambda: tuple(
+                conn.execute(
+                    text(
+                        "SELECT uses_ansi_nulls, uses_quoted_identifier FROM sys.sql_modules "
+                        "WHERE object_id = OBJECT_ID('dbo.usp_Tool2_FetchDiscardedSegments')"
+                    )
+                ).one()
+            ),
+        )
+        step(
+            "proc source:\n"
+            + "-" * 60,
+            lambda: "\n"
+            + str(
+                conn.execute(
+                    text(
+                        "SELECT OBJECT_DEFINITION(OBJECT_ID('dbo.usp_Tool2_FetchDiscardedSegments'))"
+                    )
+                ).scalar()
+            )
+            + "\n"
+            + "-" * 60,
+        )
+        step(
             "A) EXEC proc via SQLAlchemy (what tool2 does) -> rows",
             lambda: len(
                 conn.execute(
