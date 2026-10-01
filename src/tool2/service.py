@@ -1,5 +1,6 @@
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 
 from src.tool2.constants import (
     MAX_WORKERS,
@@ -45,9 +46,12 @@ def main() -> None:
             )
 
     write_last_id_segmento(batch_progress.safe_checkpoint())
+    logger.info(
+        f"batch complete: checkpointed ID_SEGMENTO={batch_progress.safe_checkpoint()}"
+    )
 
 
-def run(argv: list[str]) -> None:
+def run() -> None:
     """
     Service entrypoint: runs main() on a loop, keeping track of the ID_SEGMENTO. Fails or errors are logged and skipped, the next loop retries from the same saved position
     """
@@ -59,4 +63,11 @@ def run(argv: list[str]) -> None:
                 f"run failed, will retry next cycle: {format_exception_detail(e)}",
                 exc_info=True,
             )
+
+        next_time = datetime.now(tz=UTC).astimezone() + timedelta(
+            seconds=POLL_INTERVAL_SECONDS
+        )
+        logger.info(
+            f"sleeping {POLL_INTERVAL_SECONDS}s before next cycle..., starting again at {next_time} "
+        )
         time.sleep(POLL_INTERVAL_SECONDS)
