@@ -18,7 +18,7 @@ below 1.0 = faster than the audio plays), and prints the transcript so you
 can eyeball quality against what whisper-1 would have produced.
 
 Usage:
-    uv run scripts/bench_local_whisper.py [--limit N] [--model small|medium|large-v3] [--lookback N]
+    uv run scripts/bench_local_whisper.py [--limit N] [--model small|medium|large-v3] [--lookback N] [--id-min ID]
 """
 
 import argparse
@@ -39,6 +39,12 @@ def main() -> None:
         help="scan this many ID_SEGMENTO back from the current max to find --limit matching rows",
     )
     parser.add_argument(
+        "--id-min",
+        type=int,
+        default=None,
+        help="fetch from this ID_SEGMENTO and benchmark the first --limit rows (overrides --lookback)",
+    )
+    parser.add_argument(
         "--model", default="small", choices=["tiny", "base", "small", "medium", "large-v3"]
     )
     args = parser.parse_args()
@@ -48,11 +54,14 @@ def main() -> None:
     print(f"Loading faster-whisper model '{args.model}' (int8, CPU)...")
     model = WhisperModel(args.model, device="cpu", compute_type="int8")
 
-    max_id = current_max_id_segmento()
-    id_segmento_min = max(max_id - args.lookback, 0)
-    print(f"Fetching segments with ID_SEGMENTO >= {id_segmento_min} (max={max_id})...")
-
-    segments = fetch_discarded_segments(id_segmento_min=id_segmento_min)[-args.limit :]
+    if args.id_min is not None:
+        print(f"Fetching segments with ID_SEGMENTO >= {args.id_min}...")
+        segments = fetch_discarded_segments(id_segmento_min=args.id_min)[: args.limit]
+    else:
+        max_id = current_max_id_segmento()
+        id_segmento_min = max(max_id - args.lookback, 0)
+        print(f"Fetching segments with ID_SEGMENTO >= {id_segmento_min} (max={max_id})...")
+        segments = fetch_discarded_segments(id_segmento_min=id_segmento_min)[-args.limit :]
     if not segments:
         print(
             f"No segments matched in the last {args.lookback} IDs -- try a larger --lookback, "
