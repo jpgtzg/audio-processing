@@ -37,6 +37,13 @@ jobs:
           --collect-all pymssql
           run_tool2.py
 
+      - name: Build check_proc.exe
+        run: >
+          uv run pyinstaller --onefile --console --name check_proc
+          --add-data "src/db/freetds.conf;src/db"
+          --collect-all pymssql
+          run_check_proc.py
+
       - name: Build bench_local_whisper.exe
         run: >
           uv run pyinstaller --onefile --console --name bench_local_whisper
@@ -53,7 +60,7 @@ jobs:
         run: |
           gh release delete latest-build --yes --cleanup-tag || true
           gh release create latest-build \
-            dist/tool1.exe dist/tool2.exe dist/bench_local_whisper.exe \
+            dist/tool1.exe dist/tool2.exe dist/check_proc.exe dist/bench_local_whisper.exe \
             --title "Latest build" \
             --notes "Automated build from commit ${{ github.sha }}" \
             --target ${{ github.sha }}
