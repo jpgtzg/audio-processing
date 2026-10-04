@@ -1,6 +1,5 @@
 import os
 import threading
-from logging import DEBUG
 
 from src.audio import transcribe_timestamped_segments
 from src.extraction import extract_brand_mentions
@@ -16,16 +15,21 @@ from src.tool2.queries import (
     segment_already_recorded,
 )
 
+NO_MENTION_TITLE = "NO MENTION"
+
 _progress_lock = threading.Lock()
 _progress_done = 0
 
 
-def _process(segment: dict) -> list[dict]:
+def _process(segment: dict, debug: bool = False) -> list[dict]:
     """
     Transcribes a single segment and returns one row per detected
     brand mention (a clip can contain zero, one, or several), each carrying
     the source id_segmento/id_testigo/id_estatus_segmento so it can be traced
-    back
+    back.
+
+    With debug=True, a segment with no mentions returns a single placeholder row
+    (titulo NO_MENTION_TITLE, start/end None) so its transcript is still stored.
     """
     clip_path = crop_segment(
         segment["RUTA"], segment["INICIO"], segment["DURACION"], segment["CANAL"]
@@ -38,16 +42,17 @@ def _process(segment: dict) -> list[dict]:
     finally:
         os.remove(clip_path)
 
-    return [
-        {
-            "id_segmento": segment["ID_SEGMENTO"],
-            "id_testigo": segment["ID_TESTIGO"],
-            "id_estatus_segmento": segment["ID_ESTATUS_SEGMENTO"],
-            "full_transcript": full_transcript,
-            **mention,
-        }
-        for mention in mentions
-    ]
+    base = {
+        "id_segmento": segment["ID_SEGMENTO"],
+        "id_testigo": segment["ID_TESTIGO"],
+        "id_estatus_segmento": segment["ID_ESTATUS_SEGMENTO"],
+        "full_transcript": full_transcript,
+    }
+
+    if not mentions and debug:
+        return [{**base, "titulo": NO_MENTION_TITLE, "start": None, "end": None}]
+
+    return [{**base, **mention} for mention in mentions]
 
 
 def process_one_segment(
@@ -66,7 +71,7 @@ def process_one_segment(
 
         label = f"ID_SEGMENTO={segment['ID_SEGMENTO']}"
 
-        if segment_already_recorded(segment["ID_SEGMENTO"]) and not debug:
+        if segment_already_recorded(segment["ID_SEGMENTO"], debug=debug):
             logger.info(
                 f"[{done}/{total}] {label}: already has mention(s) recorded, skipping"
             )
@@ -75,7 +80,7 @@ def process_one_segment(
         logger.info(f"[{done}/{total}] Processing segment: {label}")
 
         try:
-            results = _process(segment)
+            results = _process(segment, debug)
         except FileNotFoundError:
             logger.info(f"[{done}/{total}] {label}: recording not reachable, skipping")
             return
@@ -96,6 +101,11 @@ def process_one_segment(
             save_mentions(results)
 
         for result in results:
+            if result["start"] is None:
+                logger.info(
+                    f"[{done}/{total}] {label}: no brand mentions found (debug row saved)"
+                )
+                continue
             logger.info(
                 f"[{done}/{total}] {label}: {result['titulo']} ({result['anunciante']} / {result['marca']}) "
                 f"({result['start']:.2f}s-{result['end']:.2f}s)"

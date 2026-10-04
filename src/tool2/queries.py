@@ -19,11 +19,18 @@ def fetch_discarded_segments(id_segmento_min: int | None = None) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def segment_already_recorded(id_segmento: int) -> bool:
+def segment_already_recorded(id_segmento: int, debug: bool = False) -> bool:
     """
     Checks if ID_SEGMENTO already has at least one row in MENCIONES_COMERCIALES table. This protects in case the segment's checkpoint was written but the process died before exiting cleanly,  or a manual re-rum with an older checkpoint.
+
+    With debug=True it checks the db_test database instead, where segments with no mentions also get a placeholder row.
     """
-    with engine.connect() as conn:
+    if debug and db_test is None:
+        raise RuntimeError(
+            "db_test is not configured -- set TEST_DB_SERVER_URL and TEST_DB_SERVER_DATABASE in .env"
+        )
+
+    with (db_test if debug else engine).connect() as conn:
         return (
             conn.execute(
                 text(
