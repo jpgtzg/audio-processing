@@ -1,5 +1,6 @@
 import os
 import threading
+from logging import DEBUG
 
 from src.audio import transcribe_timestamped_segments
 from src.extraction import extract_brand_mentions
@@ -9,7 +10,11 @@ from src.tool2.progress import (
     BatchProgress,
     write_last_id_segmento,
 )
-from src.tool2.queries import save_mentions, segment_already_recorded
+from src.tool2.queries import (
+    save_mentions,
+    save_mentions_test,
+    segment_already_recorded,
+)
 
 _progress_lock = threading.Lock()
 _progress_done = 0
@@ -46,7 +51,7 @@ def _process(segment: dict) -> list[dict]:
 
 
 def process_one_segment(
-    segment: dict, total: int, batch_progress: BatchProgress
+    segment: dict, total: int, batch_progress: BatchProgress, debug: bool
 ) -> None:
     """
     Runs process() and save_mentions() for a single segment and logs the outcome.
@@ -86,6 +91,9 @@ def process_one_segment(
             return
 
         save_mentions(results)
+        if debug:
+            save_mentions_test(results)
+
         for result in results:
             logger.info(
                 f"[{done}/{total}] {label}: {result['titulo']} ({result['anunciante']} / {result['marca']}) "

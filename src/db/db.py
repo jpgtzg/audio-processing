@@ -22,3 +22,18 @@ engine = create_engine(
     f"mssql+pymssql://{settings.DB_LOGIN}:{settings.DB_PASSWORD}"
     f"@{_host}/{settings.DB_SERVER_DATABASE}"
 )
+
+
+# Second engine for a test database with the same structure as the main one.
+# None unless TEST_DB_SERVER_URL and TEST_DB_SERVER_DATABASE are configured.
+db_test = None
+if settings.TEST_DB_SERVER_URL and settings.TEST_DB_SERVER_DATABASE:
+    _test_host = settings.TEST_DB_SERVER_URL
+    if settings.TEST_DB_SERVER_PORT:
+        _test_host = f"{_test_host}:{settings.TEST_DB_SERVER_PORT}"
+
+    db_test = create_engine(
+        f"mssql+pymssql://{settings.TEST_DB_LOGIN or settings.DB_LOGIN}:"
+        f"{settings.TEST_DB_PASSWORD or settings.DB_PASSWORD}"
+        f"@{_test_host}/{settings.TEST_DB_SERVER_DATABASE}"
+    )

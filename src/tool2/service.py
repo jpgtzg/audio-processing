@@ -17,6 +17,8 @@ from src.tool2.queries import (
     fetch_discarded_segments,
 )
 
+DEBUG = True
+
 
 def main() -> None:
     """
@@ -40,7 +42,9 @@ def main() -> None:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             list(
                 executor.map(
-                    lambda s: process_one_segment(s, total, batch_progress),
+                    lambda s: process_one_segment(
+                        s, total, batch_progress, debug=DEBUG
+                    ),
                     segments,
                 )
             )
