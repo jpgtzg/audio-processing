@@ -23,13 +23,6 @@ jobs:
       - name: Install dependencies
         run: uv sync --group build
 
-      - name: Build tool1.exe
-        run: >
-          uv run pyinstaller --onefile --console --name tool1
-          --add-data "src/db/freetds.conf;src/db"
-          --collect-all pymssql
-          run_tool1.py
-
       - name: Build tool2.exe
         run: >
           uv run pyinstaller --onefile --console --name tool2
@@ -53,7 +46,7 @@ jobs:
         run: |
           gh release delete latest-build --yes --cleanup-tag || true
           gh release create latest-build \
-            dist/tool1.exe dist/tool2.exe dist/bench_local_whisper.exe \
+            dist/tool2.exe dist/bench_local_whisper.exe \
             --title "Latest build" \
             --notes "Automated build from commit ${{ github.sha }}" \
             --target ${{ github.sha }}
