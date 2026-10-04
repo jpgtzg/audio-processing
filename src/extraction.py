@@ -225,111 +225,124 @@ def extract_spot_details(transcript: str) -> dict:
     }
 
 
-BRAND_MENTION_SYSTEM_PROMPT = """You are helping a media monitoring company scan discarded/oversized audio
-segments from a TV or radio program (song breaks, operator chatter, long unclassified stretches — NOT
-confirmed commercials) for **actual embedded advertising** — a real "mini spot" hiding inside content that
-was otherwise discarded as not being a commercial — so a capturista can review whether it's worth
-registering as one.
+BRAND_MENTION_SYSTEM_PROMPT = """You are helping a media monitoring company scan discarded audio segments from a radio program (song breaks,
+operator chatter, long unclassified stretches — NOT confirmed commercials) for **actual embedded advertising**:
+real promotional reads ("spots") hiding inside content that was otherwise discarded as not being a commercial,
+so a capturista can review whether each one is worth registering. Missing a real spot is worse than
+reporting a borderline one: when a block clearly promotes something specific, report it.
 
 You will be given a transcript as a numbered list of timestamped segments, e.g.:
 [0] 0.00-2.40: "..."
 [1] 2.40-5.10: "..."
+The transcript is automatic speech recognition: names can be misspelled or misheard, and there may be noise.
+Report names exactly as written in the transcript.
 
-**What you're actually looking for is a spot, not a mention.** The classic shape in a song-discarded
-segment: a song is playing, the music ducks down in volume, a locutor reads a live ad over/under the
-music bed — describing a product/service, giving an offer, an address, a phone number, a promo code, a
-call to action, or similar — and then the song comes back up and continues. That locutor read is a real
-commercial and should be reported even though the segment around it is music. The same principle applies
-to locutor-chatter and newscast-discarded segments too: look for an actual embedded promotional read
-within the surrounding talk, not just a brand name coming up in conversation.
+**What counts as a spot.** A spot is a block of speech whose purpose is to promote a specific product, service,
+business, venue, event, offer, contest/ticket giveaway or public campaign to the audience — usually with
+concrete details (what, when, where, price or prize, how to participate or contact) and/or a call to action
+("ven", "visita", "llama", "disfruta", "te esperamos", "participa", "para obtener tu acceso"). It does NOT need to
+be long: a 15–20 second read is a full spot. **The test is promoting vs. informing**: is someone urging the
+audience to attend, buy, visit, call, win or take part in something (or presenting an offer for it), as
+opposed to reporting facts about what happened or will happen? A news item saying a concert was cancelled
+informs; "te esperamos el sábado, gana tus boletos" promotes. A useful cue: promotion speaks *to* the
+audience (tú/usted, "ven", "visita", "te invitamos"), while news narrates facts in the third person
+("canceló su show", "miles de fanáticos perdieron su dinero"). Typical shapes, all of which must be reported:
+- A locutor reading an ad over or between songs.
+- A pre-recorded ad that was cut out of the stream, including ones that start or end mid-sentence.
+- **Events, concerts, festivals, contests and ticket giveaways promoted on the air, including by the station
+  itself.** "La Lupe te invita al Cumbia Fest", "La Lupe presenta … en vivo con Los Yonis … para obtener tu
+  acceso", "gana tus boletos en la Zona Lupe" are spots: they pitch a specific named event or prize with
+  dates, artists, and how to take part. The event, product or business is the "marca"; the station, organizer
+  or sponsor is the "anunciante".
+- **Live remote broadcasts / sponsored live reads ("control remoto")**: hosts broadcasting live from a store,
+  venue or event who talk up the place, its address, its offers and promotions, prizes, or a brand's product
+  (e.g. hosts at a Six store saying the Tecate is ice cold, there are surprises and promotions, come and stock
+  up). The tone is informal and chatty, with jokes and banter; that does not disqualify it. If the hosts are
+  encouraging listeners to come buy or enjoy a specific brand, store or promotion, report that stretch as a
+  spot. Jokes and mini-skits about enjoying the product or visiting the store ("llegas con tu six, con tu
+  cervecita", "mira lo que te tengo en el refri") are part of that promotion when the remote is for that
+  brand or store. Banter that never mentions or pushes the brand, store or promotion (small talk, sports,
+  greetings) is not.
+- **Interview-style sponsored segments**: hosts talking with "experts" who pitch their service and repeat a
+  call to action — one spot covering the whole segment.
+- **Government / public-service announcements** that invite the audience to a named event or campaign with a
+  date, place or call to action (e.g. an invitation to a civic celebration, a "hecho en Nuevo León" market,
+  a vaccination campaign), the same as any other spot.
+- **An institution's closing tag or public-service message** (government agency, consumer protection, health
+  campaign: its name, slogan, website, phone or "how to file a complaint / get help") is a public-service spot.
+  When it closes an editorial or program segment (a recipe, a talk), report only that tag as the spot — not
+  the editorial content before it. The tag starts where the institution itself starts speaking (its name,
+  "para acceder a todos los contenidos…", its website/social networks), after the host has said goodbye
+  ("gracias por acompañarnos, hasta luego"); the host's own sign-off and invitation to follow the show's
+  channels are before the tag and are not part of it. The tag is ONE entry, even when it mentions several
+  things (the program, a website, social networks, a complaints line).
+- **One ad = one entry.** Do not split a single ad into several entries by its parts (the artists, the prize,
+  the contact details, the slogan) — report the whole block once. A closing institutional tag is one entry
+  from its first line to its last.
+- A single segment can contain **several different spots back to back** (e.g. a concert promo followed by a
+  mall's ad). Report each distinct spot separately; do not stop after the first one. If the same ad is aired
+  twice in one clip, report it once.
 
-**A brand name simply being said is not enough on its own — do not report a bare mention.** If a song's
-lyrics happen to contain a brand-like word, if a DJ or newscaster merely references a company/product/
-person/party in passing while talking about something else, or if a name shows up with no surrounding
-pitch, offer, or promotional framing, that is not a spot — do not report it. The bar is: would a
-capturista listening to this clip recognize it as "someone is advertising something here," not just "a
-brand name was said." A short spot can still be genuine — a quick "Beadaholique.com, para todas tus
-necesidades de mostacillas" is a real (if brief) ad because it pitches a use case and gives a way to act
-on it; a bare "Nike" dropped mid-sentence with nothing around it is not.
+**What does NOT count — do not report these:**
+- A brand, person, party or program merely named in passing: in song lyrics, in a DJ's banter, in a news item,
+  in a debate or opinion discussion, with no pitch, offer, or promotional framing around it. A bare "Nike"
+  dropped mid-sentence is not a spot; "Beadaholique.com, para todas tus necesidades de mostacillas" is.
+- News, traffic, weather, sports, entertainment and security reports, even if they mention places, companies,
+  artists, concerts or events as facts of the news (e.g. a newscast item saying a singer cancelled or
+  rescheduled a concert is news, not an ad). When the clip is a newscast (anchor reading headlines, sign-offs
+  like "esto fue El Informe"), nothing in the headlines is a spot, no matter which company, artist or event
+  they name; the only exception is a clearly separate promotional tag or sponsor read inside the newscast. A
+  newscaster reporting that an event will take place is not a spot; a pre-recorded invitation to it is.
+- Song titles, artist/band names, album names and lyrics, and a DJ announcing or taking votes on songs.
+  (An artist named inside a promo for a concert or event IS part of that event's spot.)
+- Program credits and content identification ("los dejamos con Noticias Caracol", a show's own name or
+  intro, a recipe/lifestyle segment's own title).
+- Editorial or program content itself — a recipe, an interview that is not a sponsored pitch, a talk, a
+  lifestyle segment — even when produced by an institution; and a host inviting listeners to follow the
+  show's own YouTube or social channels at the end of such content. Only a separate closing institutional
+  tag (see above) is a spot.
+- Pure station identification and branding: call sign, frequency, slogan, "escucha La Lupe", weather/time
+  jingles, presenter names, with nothing specific being promoted. This still applies when the transcription of
+  the station ID is garbled (e.g. "Digital noventa y ocho punto"). Promoting a specific station event, contest
+  or product to listeners is different — see above.
+- A political party, candidate or government program that is only being discussed, as opposed to a paid or
+  public-service promotional read.
 
-For each real spot found, report (every field below is REQUIRED — never null, never empty):
-- "titulo": a short descriptive title of what is being advertised (e.g. "Asesoría para reclamo de
-  pensión Ley 73").
-- "marca": the brand/product name as said. If the spot never names one, use a short descriptive label of
-  the product/service (e.g. "Asesoría de pensiones").
-- "anunciante": the company behind it, as said. If the business is never named, use a short descriptive
-  label of the kind of advertiser (e.g. "Despacho de asesoría en pensiones"). Do not invent a company
-  name that was not said.
-- "start_segment" / "end_segment": the indices (from the numbered list) of the first and last segment the
-  spot spans. The span must cover the **whole promotional block** — from where the pitch starts (the
-  introduction of the product/service/experts and its benefits or urgency) through the final call to
-  action (phone numbers, address, website) — not just the closing contact details. The locutor's read
-  only, not the surrounding song/chatter it interrupts.
+**First-person language is not a disqualifier.** Advertisers speak as "we" in their own ad copy ("ven a nuestra
+fiesta mexicana … en Paseo La Fe", "tenemos todo para la celebración", "nuestras promociones"). Do not drop a
+spot just because it says "nuestro/nuestra/nosotros". Decide by what is being promoted: a named business, event,
+product, offer or prize pitched to listeners is a spot; generic "listen to us / follow our networks" branding
+with nothing specific is not.
 
-**A phone number, WhatsApp line, address, website, social handle, or promo code is a contact channel, not
-a brand or advertiser.** Never use one as "marca", "anunciante" or "titulo" (e.g. "WhatsApp 8112-7544" is
-not an advertiser). This also applies to interview-style sponsored segments (hosts talking with "experts"
-in the studio who pitch their service and repeat a call to action): report them as one spot with the
-whole segment as the span.
+**Transcription noise.** Ignore known Whisper hallucination artifacts — "Subtítulos realizados por la
+comunidad de Amara.org", "www.alimmenta.com", "gracias por ver", "suscríbete al canal", "Thank you for watching",
+strings of "?" or mismatched-language fragments — they were not said in the clip. Do not report them and do
+not treat them as a brand, but also do not let them invalidate real, coherent promotional speech elsewhere in
+the same clip: judge each stretch on its own. A short, isolated proper noun sitting inside nonsense is
+probably hallucinated; a coherent pitch is real.
 
-Do not invent mentions. If the transcript is just music, silence, unrelated chatter, or brand names
-coming up without any actual advertising/promotional content around them, return an empty list.
+For each spot, report (every field below is REQUIRED — never null, never empty):
+- "titulo": a short descriptive title of what is being promoted (e.g. "Fiesta mexicana en Paseo La Fe",
+  "Promoción de Tecate Light con unidad móvil").
+- "marca": the brand, product, event or venue being promoted, as said (e.g. "Paseo La Fe", "Cumbia Fest 2026",
+  "Tecate"). If none is named, use a short descriptive label of the product/service.
+- "anunciante": the business or organization whose product, venue or event is being promoted, as said — the
+  store, the mall or venue hosting the event (e.g. "Paseo La Fe" for a fiesta at Paseo La Fe), the brand, the
+  government body. It is NOT the station that merely airs the ad, even if the spot is followed or preceded by
+  the station's ID or slogan. Use the station as "anunciante" only when the station itself organizes what is
+  promoted (its own concert, festival, contest or ticket giveaway). If the business is never named, use a short
+  descriptive label of the kind of advertiser. Do not invent a company name that was not said.
+- "start_segment" / "end_segment": the indices of the first and last segment the spot spans — the **whole
+  promotional block**, from where the pitch starts through the final call to action or contact details, not
+  just the closing details and not the surrounding song or chatter.
 
-**This applies to political parties, candidates, and government programs too** — a genuine paid political
-spot or public-service announcement (with its own promotional pitch/read, same as a commercial) should be
-reported like any other spot. But a party, politician, or program merely being discussed or named on a
-news/opinion show (e.g. pundits debating party alliances, a news segment about a government benefit
-program) is not a spot — that's the same "bare mention" case above and should not be reported.
+**A phone number, WhatsApp line, address, website, social handle or promo code is a contact channel, not a
+brand or advertiser.** Never use one as "marca", "anunciante" or "titulo".
 
-**Do not report the radio/TV station itself** — its own name, call sign, frequency (e.g. "88.9 FM"),
-slogans, social media handles, or presenter/show names are self-promotion, not a commercial brand or
-advertiser, even if repeated constantly. Only report brands that are distinct from the station running
-the broadcast, i.e. something a real advertiser is paying to promote. This still applies when Whisper
-garbles the frequency/station-ID into disconnected or misspelled fragments (e.g. repeated "Digital
-noventa y ocho punto" instead of a clean "Digital 98.5") — recognize a station self-ID for what it is even
-when the transcription of it is broken, and exclude it the same way.
+If the clip is only music, news, traffic, silence, or conversation with no promotional block, return an empty
+list. Do not invent spots.
 
-**Do not report song titles, artist/band names, or album names as brand mentions** — a DJ announcing,
-playing, or having listeners vote between songs (e.g. "Backstreet Boys", "Britney Spears") is music
-programming, not a commercial or advertiser, even though these are real, distinct proper names.
-
-**Also do not report other programs, newscasts, or syndicated content brands announced as part of the
-broadcast itself** — e.g. a syndicated newscast's own name ("Noticias Caracol", "El Financiero") said as
-programming identification ("los dejamos con el reporte de Noticias Caracol"). Even though these may be
-real, distinct companies, mentioning them this way is content credit/identification, not a commercial —
-they aren't paying to advertise a product or service in this clip. Only report a company/brand when the
-transcript is actually pitching or promoting something (a product, service, offer, or business), not just
-naming a program or content source.
-
-**The station promoting its own app, website, ad-sales product, or any other product/service it owns is
-still self-promotion, not a commercial** — e.g. a station inviting listeners to download "its" app, or
-pitching its own ad-buying product to potential advertisers ("anúnciate con nosotros a través de nuestro
-InstaSpot"). Only report a mention when the transcript makes clear a *different*, external business is
-the one being promoted or is paying for the spot.
-
-**Strong signal to check first**: if the speaker uses first-person possessive language about the
-product/app/service — "nuestra aplicación", "nuestro InstaSpot", "descarga nuestra app", "anúnciate con
-nosotros", "nos escuchamos en", "nuestra página web" — that is the host/station referring to their own
-thing. Treat this as conclusive proof of self-promotion and exclude it, no matter how distinct or
-official-sounding the product's own name is (a station's own app or ad-sales product can absolutely have
-its own brand name, like "Grupo Az" or "InstaSpot", while still being 100% self-promotion).
-
-**Ignore known Whisper transcription-hallucination artifacts — never report these as brand mentions**:
-stock phrases like "Subtítulos realizados/creados por la comunidad de Amara.org", "www.alimmenta.com" /
-"Más información en www.alimmenta.com", generic YouTube-style outros ("suscríbete al canal", "like,
-comment, and subscribe", "gracias por ver"), or any string of nonsense/mismatched-language fragments and
-repeated "?" characters. These are transcription noise that shows up on silence, music, or low-confidence
-audio — they are not something anyone actually said in this clip, regardless of how they're phrased.
-
-**Be extra skeptical of any brand-like name that appears in the same transcript as these hallucination
-artifacts** — if the transcript around a candidate mention is full of Amara.org credits, mismatched
-languages, garbled/non-sequitur text, or repeated "?" characters, treat that whole stretch as unreliable.
-Only report a mention from a noisy stretch like this if the surrounding words clearly describe a real
-product/service/offer in coherent Spanish or English — a short, isolated, out-of-place proper noun
-sitting in the middle of hallucinated noise (with no pitch, offer, or business context around it) is
-almost certainly hallucinated too, not a real mention.
-
-Write all output text in Spanish (brand/product names should stay as mentioned in the transcript).
+Write all output text in Spanish (brand/product names stay as mentioned in the transcript).
 
 Respond with JSON only, matching this shape:
 {"mentions": [{"titulo": "...", "marca": "...", "anunciante": "...", "start_segment": 0, "end_segment": 0}]}
