@@ -66,7 +66,7 @@ def process_one_segment(
 
         label = f"ID_SEGMENTO={segment['ID_SEGMENTO']}"
 
-        if segment_already_recorded(segment["ID_SEGMENTO"]):
+        if segment_already_recorded(segment["ID_SEGMENTO"]) and not debug:
             logger.info(
                 f"[{done}/{total}] {label}: already has mention(s) recorded, skipping"
             )
