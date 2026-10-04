@@ -90,9 +90,10 @@ def process_one_segment(
             logger.info(f"[{done}/{total}] {label}: no brand mentions found")
             return
 
-        save_mentions(results)
         if debug:
             save_mentions_test(results)
+        else:
+            save_mentions(results)
 
         for result in results:
             logger.info(
