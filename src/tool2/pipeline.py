@@ -103,7 +103,7 @@ def process_one_segment(
         for result in results:
             if result["start"] is None:
                 logger.info(
-                    f"[{done}/{total}] {label}: no brand mentions found (debug row saved)"
+                    f"[{done}/{total}] {label}: no brand mentions found (still saved)"
                 )
                 continue
             logger.info(
