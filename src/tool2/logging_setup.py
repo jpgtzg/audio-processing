@@ -1,7 +1,11 @@
 import logging
 import os
+from logging.handlers import TimedRotatingFileHandler
 
-LOG_FILE = os.environ.get("TOOL2_LOG_FILE", "tool2.log")
+LOG_DIR = os.environ.get("TOOL2_LOG_DIR", "log")
+LOG_FILE = os.path.join(LOG_DIR, "tool2.log")
+ROTATE_EVERY_DAYS = 3
+BACKUP_COUNT = 10  # rotated files kept (~30 days)
 
 logger = logging.getLogger("tool2")
 logger.setLevel(logging.INFO)
@@ -11,7 +15,14 @@ if not logger.handlers:
     _console_handler.setFormatter(_formatter)
     logger.addHandler(_console_handler)
     try:
-        _file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+        os.makedirs(LOG_DIR, exist_ok=True)
+        _file_handler = TimedRotatingFileHandler(
+            LOG_FILE,
+            when="D",
+            interval=ROTATE_EVERY_DAYS,
+            backupCount=BACKUP_COUNT,
+            encoding="utf-8",
+        )
         _file_handler.setFormatter(_formatter)
         logger.addHandler(_file_handler)
     except OSError:
