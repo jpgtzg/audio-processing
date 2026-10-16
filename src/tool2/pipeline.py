@@ -21,7 +21,7 @@ _progress_lock = threading.Lock()
 _progress_done = 0
 
 
-def _process(segment: dict, debug: bool = False) -> list[dict]:
+def _process(segment: dict) -> list[dict]:
     """
     Transcribes a single segment and returns one row per detected
     brand mention (a clip can contain zero, one, or several), each carrying
@@ -49,7 +49,7 @@ def _process(segment: dict, debug: bool = False) -> list[dict]:
         "full_transcript": full_transcript,
     }
 
-    if not mentions and debug:
+    if not mentions:
         return [{**base, "titulo": NO_MENTION_TITLE, "start": None, "end": None}]
 
     return [{**base, **mention} for mention in mentions]
@@ -80,7 +80,7 @@ def process_one_segment(
         logger.info(f"[{done}/{total}] Processing segment: {label}")
 
         try:
-            results = _process(segment, debug)
+            results = _process(segment)
         except FileNotFoundError:
             logger.info(f"[{done}/{total}] {label}: recording not reachable, skipping")
             return
